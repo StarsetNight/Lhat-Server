@@ -5,6 +5,7 @@ import queue
 import os
 import os.path
 import sys
+import json
 from server_operations import *
 
 '''
@@ -31,8 +32,7 @@ lock = threading.Lock()
 def OnOnline():
     online = []
     for new_index in range(len(user_connections)):
-        online.append(user_connections[new_index][0])
-    online = json.dumps(online)
+        online.append(unpack(user_connections[new_index][0])[1])
     return online
 
 
@@ -97,8 +97,9 @@ class Server(threading.Thread):
         while True:
             if not messages.empty():
                 message = messages.get()
-                message_json = unpack(message[1])
-                if message_json[0] == 'USER_NAME':
+
+
+                '''if message_json[0] == 'USER_NAME':
                     for i in range(len(user_connections)):
                         try:
                             user_connections[i][1].send(message[0].encode('utf-8'))
@@ -108,7 +109,19 @@ class Server(threading.Thread):
                     for i in range(len(user_connections)):
                         user_connections[i][1].send(message[2])
                         print(message[1])
-                        print('\n')
+                        print('\n')'''
+
+                if isinstance(message[1], str):
+                    for i in range(len(user_connections)):
+                        user_connections[i][1].send(message[2])
+                    print(message[2])
+                    print('\n')
+                else:
+                    for i in range(len(user_connections)):
+                        try:
+                            user_connections[i][1].send(pack(message[1][0], None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+                        except Exception as e:
+                            print(e)
 
     def run(self):
         self.s.bind((ip, port))
