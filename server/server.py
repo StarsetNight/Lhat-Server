@@ -2,7 +2,6 @@ import settings
 import socket
 import threading
 import queue
-import json  # json.dumps(some)打包   json.loads(some)解包
 import os
 import os.path
 import sys
@@ -62,7 +61,7 @@ class Server(threading.Thread):
                 user = temp + str(tag)
         user_connections.append((user, conn))
         online_users = OnOnline()
-        self.Load(online_users, address, online_users.encode('utf-8'))
+        self.Load(online_users, address)
         # 在获取用户名后便会不断地接受用户端发来的消息（即聊天内容），结束后关闭连接。
         try:
             while True:
@@ -102,8 +101,7 @@ class Server(threading.Thread):
                 if message_json[0] == 'USER_NAME':
                     for i in range(len(user_connections)):
                         try:
-                            user_connections[i][1].send(pack(message_json[1], None,
-                                                             'Lhat! Chatting Room', 'USER_MANIFEST'))
+                            user_connections[i][1].send(message[0].encode('utf-8'))
                         except Exception as e:
                             print(e)
                 else:

@@ -2,7 +2,7 @@ import json
 import time
 
 
-def pack(raw_message: str, send_from, chat_with, message_type, file_name=None):
+def pack(raw_message, send_from, chat_with, message_type, file_name=None):
     """
     打包消息，用于发送
     :param raw_message: 正文消息
