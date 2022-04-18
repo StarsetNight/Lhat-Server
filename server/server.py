@@ -119,7 +119,9 @@ class Server(threading.Thread):
                 else:
                     for i in range(len(user_connections)):
                         try:
-                            user_connections[i][1].send(pack(message[1][0], None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+                            user_connections[i][1].send(pack(
+                                json.dumps(message[1]), None, 'Lhat! Chatting Room', 'USER_MANIFEST'
+                            ))
                         except Exception as e:
                             print(e)
 
