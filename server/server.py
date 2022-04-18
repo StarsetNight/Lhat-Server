@@ -6,6 +6,7 @@ import json  # json.dumps(some)打包   json.loads(some)解包
 import os
 import os.path
 import sys
+from server_operations import *
 
 '''
 变量备忘录
@@ -32,6 +33,7 @@ def OnOnline():
     online = []
     for new_index in range(len(user_connections)):
         online.append(user_connections[new_index][0])
+    online = json.dumps(online)
     return online
 
 
@@ -60,13 +62,13 @@ class Server(threading.Thread):
                 user = temp + str(tag)
         user_connections.append((user, conn))
         online_users = OnOnline()
-        self.Load(online_users, address)
+        self.Load(online_users, address, online_users.encode('utf-8'))
         # 在获取用户名后便会不断地接受用户端发来的消息（即聊天内容），结束后关闭连接。
         try:
             while True:
                 message = conn.recv(1024)  # 接收用户发来的消息
-                message = message.decode('utf-8')
-                self.Load(message, address)
+                message_string = message.decode('utf-8')
+                self.Load(message_string, address, message)
         # 如果用户断开连接，将该用户从用户列表中删除，然后更新用户列表。
         except Exception as e:
             print(e)
@@ -83,34 +85,32 @@ class Server(threading.Thread):
 
     # 将地址与数据（需发送给客户端）存入messages队列。
     @staticmethod
-    def Load(data, address):
+    def Load(data, address, raw_data=b''):
         lock.acquire()
         try:
-            messages.put((address, data))
+            messages.put((address, data, raw_data))
         finally:
             lock.release()
 
             # 服务端在接受到数据后，会对其进行一些处理然后发送给客户端，如下图，对于聊天内容，服务端直接发送给客户端，而对于用户列表，便由json.dumps处理后发送。
 
-    @staticmethod
-    def sendData():  # 发送数据
+    def sendData(self):  # 发送数据
         while True:
             if not messages.empty():
                 message = messages.get()
-                if isinstance(message[1], str):
-                    for i in range(len(user_connections)):
-                        data = ' ' + message[1]
-                        user_connections[i][1].send(data.encode('utf-8'))
-                        print(data)
-                        print('\n')
-
-                if isinstance(message[1], list):
-                    data = json.dumps(message[1])
+                message_json = unpack(message[1])
+                if message_json[0] == 'USER_NAME':
                     for i in range(len(user_connections)):
                         try:
-                            user_connections[i][1].send(data.encode('utf-8'))
+                            user_connections[i][1].send(pack(message_json[1], None,
+                                                             'Lhat! Chatting Room', 'USER_MANIFEST'))
                         except Exception as e:
                             print(e)
+                else:
+                    for i in range(len(user_connections)):
+                        user_connections[i][1].send(message[2])
+                        print(message[1])
+                        print('\n')
 
     def run(self):
         self.s.bind((ip, port))
