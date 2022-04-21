@@ -66,10 +66,12 @@ class Server(threading.Thread):
             while True:
                 message = conn.recv(1024)  # 接收用户发来的消息
                 message_string = message.decode('utf-8')
+                if not message_string:
+                    raise ConnectionError('User disconnected.')
                 self.Load(message_string, address, message)
         # 如果用户断开连接，将该用户从用户列表中删除，然后更新用户列表。
-        except Exception as e:
-            print(e)
+        except ConnectionError as e:
+            print('User disconnected.')
             j = 0  # 用户断开连接
             for man in user_connections:
                 if man[0] == user:
