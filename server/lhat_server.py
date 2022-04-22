@@ -31,7 +31,7 @@ class Server:
         print('Waiting for connection...')
         self.main_sock.setblocking(False)  # 设置为非阻塞
         self.need_handle_messages = []  # 创建一个空的消息队列
-        self.user_connections = []  # 创建一个空的用户连接列表
+        self.user_connections = {}  # 创建一个空的用户连接列表
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
 
     def run(self):
@@ -75,6 +75,13 @@ class Server:
             except ConnectionResetError:  # 如果读取失败，则说明客户端已断开连接
                 print(f'Connection closed: {data.address[0]}:{data.address[1]}')
                 self.select.unregister(sock)  # 从IO多路复用中移除连接
+                temp_connections = self.user_connections.copy()
+                for username, exist_socks in temp_connections.items():
+                    if exist_socks == sock:
+                        del self.user_connections[username]
+                online_users = self.getOnlineUsers()
+                for sending_sock in self.user_connections.values():
+                    sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
                 sock.close()  # 关闭连接
                 return
             if data.inbytes:
@@ -83,6 +90,12 @@ class Server:
             else:
                 print(f'Connection closed: {data.address[0]}:{data.address[1]}')
                 self.select.unregister(sock)  # 如果没有消息，则从IO多路复用中移除连接
+                for username, exist_socks in self.user_connections.items():
+                    if exist_socks == sock:
+                        del self.user_connections[username]
+                online_users = self.getOnlineUsers()
+                for sending_sock in self.user_connections.values():
+                    sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
                 sock.close()
                 return
 
@@ -108,7 +121,7 @@ class Server:
             return
         recv_data = unpack(message.decode('utf-8'))  # 解码消息
         if recv_data == 'TEXT_MESSAGE':
-            for sending_sock in self.user_connections:
+            for sending_sock in self.user_connections.items():
                 sending_sock[1].send(message)
 
         elif recv_data[0] == 'USER_NAME':
@@ -117,15 +130,15 @@ class Server:
             else:
                 user = recv_data[1]
             tag = 0
-            for username in self.user_connections:
-                if username[0] == user:
+            for username in self.user_connections.keys():
+                if username == user:
                     tag += 1
                     user = user + str(tag)
                 # 将用户名加入连接列表
-            self.user_connections.append([user, sock])
+            self.user_connections[user] = sock
             online_users = self.getOnlineUsers()
-            for sending_sock in self.user_connections:
-                sending_sock[1].send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+            for sending_sock in self.user_connections.values():
+                sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
 
     def getOnlineUsers(self):
         """
@@ -133,8 +146,8 @@ class Server:
         :return: 在线用户列表
         """
         online_users = []
-        for user in self.user_connections:
-            online_users.append(user[0])
+        for user in self.user_connections.keys():
+            online_users.append(user)
         return online_users
 
 
