@@ -46,7 +46,6 @@ class Server:
                     self.createConnection(key.fileobj)  # 接收连接
                 else:  # 如果是已连接
                     self.serveClient(key, mask)  # 处理连接
-                    self.need_handle_messages = []  # 清空消息队列
 
     def createConnection(self, sock):
         """
@@ -57,7 +56,7 @@ class Server:
         conn, address = sock.accept()  # 接收连接，并创建一个新的连接
         print(f'Connection established: {address[0]}:{address[1]}')
         conn.setblocking(False)  # 设置为非阻塞
-        namespace = types.SimpleNamespace(address=address, inbytes=b'', outbytes=b'')  # 创建一个空的命名空间，用于存储连接信息
+        namespace = types.SimpleNamespace(address=address, inbytes=b'')  # 创建一个空的命名空间，用于存储连接信息
         self.select.register(conn, selectors.EVENT_READ | selectors.EVENT_WRITE,
                              data=namespace)  # 注册连接到IO多路复用，以便于多连接
 
@@ -72,7 +71,7 @@ class Server:
         data = key.data  # 获取命名空间
         if mask & selectors.EVENT_READ:  # 如果可读，则开始从客户端读取消息
             try:
-                data.inbytes += sock.recv(1024)  # 从客户端读取消息
+                data.inbytes = sock.recv(1024)  # 从客户端读取消息
             except BlockingIOError:  # 如果读取失败，则说明客户端已断开连接
                 print(f'Connection closed: {data.address[0]}:{data.address[1]}')
                 self.select.unregister(sock)  # 从IO多路复用中移除连接
@@ -95,6 +94,7 @@ class Server:
             if self.need_handle_messages:
                 for processing_message in self.need_handle_messages:
                     self.processMessage(processing_message, sock, data.address)
+                self.need_handle_messages = []
 
     def processMessage(self, message, sock, address=None):
         """
@@ -105,10 +105,14 @@ class Server:
         :return: 无返回值
         """
         print(message)
+        if not message:
+            print(f'Connection closed: {address[0]}:{address[1]}')
+            self.select.unregister(sock)  # 从IO多路复用中移除连接
+            sock.close()  # 关闭连接
+            return
         recv_data = unpack(message.decode('utf-8'))  # 解码消息
         if recv_data == 'TEXT_MESSAGE':
             sock.send(message)
-            # 移除发送完毕的消息
 
         elif recv_data[0] == 'USER_NAME':
             if recv_data[1] == '用户名不存在':
@@ -122,8 +126,6 @@ class Server:
                     user = user + str(tag)
             self.user_names.append(user)
             sock.send(pack(json.dumps(self.user_names), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
-        # 移除发送完毕的消息
-        self.need_handle_messages.remove(message)
 
 
 if __name__ == '__main__':
