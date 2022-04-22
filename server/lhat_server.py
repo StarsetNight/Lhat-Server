@@ -84,6 +84,9 @@ class Server:
                     sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
                 sock.close()  # 关闭连接
                 return
+            except UnicodeDecodeError:
+                print('A data for authentication may be received.')
+                return
             if data.inbytes:
                 self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
