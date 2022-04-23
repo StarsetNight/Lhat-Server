@@ -45,32 +45,19 @@ def unpack(json_message: str):
         if isinstance(message, list):
             message = message[0]
             message = json.loads(message)
-        elif isinstance(message, dict):
-            pass
 
         if message['end'] != 'JSON_MESSAGE_END':
-            return None
+            return None,
     except json.decoder.JSONDecodeError:
-        return None
+        return 'DO_NOT_PROCESS',
 
     if message['type'] == 'TEXT_MESSAGE_ARTICLE':  # 如果是纯文本消息
-        return 'TEXT_MESSAGE'
+        return 'TEXT_MESSAGE', message['to'], message['by'], message['time']
     elif message['type'] == 'USER_NAME':  # 如果是用户名称
         try:
             username = message['message']
             return message['type'], username
         except json.decoder.JSONDecodeError:
-            return 'MANIFEST_NOT_JSON'
-
-    elif message['type'] == 'FILE_RECV_DATA':
-        '''
-        output_box.emit('锵锵！正在接收文件...')
-        file_path = os.path.join('/files/', message['message'])
-        with open(file_path, 'wb') as opened_file:
-            opened_file.write(message['message'])
-        output_box.emit(f'接收完毕！保存路径为：{file_path}')
-        return 'FILE_SAVED'
-        '''
-        # 待办 接收文件
+            return 'MANIFEST_NOT_JSON',
     else:
-        return 'UNKNOWN_MESSAGE_TYPE'
+        return 'UNKNOWN_MESSAGE_TYPE',
