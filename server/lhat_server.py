@@ -84,9 +84,6 @@ class Server:
                     sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
                 sock.close()  # 关闭连接
                 return
-            except UnicodeDecodeError:
-                print('A data for authentication may be received.')
-                return
             if data.inbytes:
                 self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
@@ -116,25 +113,35 @@ class Server:
         :param address: 客户端地址
         :return: 无返回值
         """
-        print(message)
         if not message:
             print(f'Connection closed: {address[0]}:{address[1]}')
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
             return
         recv_data = unpack(message.decode('utf-8'))  # 解码消息
-        if recv_data == 'TEXT_MESSAGE':
+        if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
+            if recv_data[1] == 'Lhat! Chatting Room':  # 群聊
+                print(message)
+                for sending_sock in self.user_connections.items():  # 直接发送
+                    sending_sock[1].send(message)
+            else:
+                print(f'Private Message received [{recv_data[3]}]')
+                for username, sending_sock in self.user_connections.items():  # 私聊
+                    if username == recv_data[1] or username == recv_data[2]:  # 遍历所有用户，找到对应用户
+                        # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
+                        sending_sock.send(message)  # 发送给该用户
+        elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.items():
                 sending_sock[1].send(message)
 
-        elif recv_data[0] == 'USER_NAME':
-            if recv_data[1] == '用户名不存在':
-                user = address[0] + ':' + address[1]
+        elif recv_data[0] == 'USER_NAME':  # 如果是用户名
+            if recv_data[1] == '用户名不存在':  # 如果客户端未设定用户名
+                user = address[0] + ':' + address[1]  # 直接使用IP和端口号
             else:
-                user = recv_data[1]
+                user = recv_data[1]  # 否则使用客户端设定的用户名
             tag = 0
             for username in self.user_connections.keys():
-                if username == user:
+                if username == user:  # 如果重名，则添加数字
                     tag += 1
                     user = user + str(tag)
                 # 将用户名加入连接列表
