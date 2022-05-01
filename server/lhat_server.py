@@ -46,6 +46,7 @@ class Server:
                     self.createConnection(key.fileobj)  # 接收连接
                 else:  # 如果是已连接
                     self.serveClient(key, mask)  # 处理连接
+            time.sleep(0.0001)  # 因为是阻塞的，所以sleep不会漏消息，同时降低负载
 
     def createConnection(self, sock):
         """
