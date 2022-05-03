@@ -23,6 +23,12 @@ class Server:
         """
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
+
+    def run(self):
+        """
+        启动服务器
+        :return: 无返回值，因为服务器一直运行，直到程序结束
+        """
         # main_sock是用于监听的socket，用于接收客户端的连接
         self.main_sock.bind((ip, port))
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
@@ -33,12 +39,6 @@ class Server:
         self.need_handle_messages = []  # 创建一个空的消息队列
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
-
-    def run(self):
-        """
-        启动服务器
-        :return: 无返回值，因为服务器一直运行，直到程序结束
-        """
         while True:
             events = self.select.select(timeout=None)  # 阻塞等待IO事件
             for key, mask in events:  # 事件循环，key用于获取连接，mask用于获取事件类型
@@ -74,36 +74,23 @@ class Server:
             try:
                 data.inbytes = sock.recv(1024)  # 从客户端读取消息
             except ConnectionResetError:  # 如果读取失败，则说明客户端已断开连接
-                print(f'Connection closed: {data.address[0]}:{data.address[1]}')
-                self.select.unregister(sock)  # 从IO多路复用中移除连接
-                temp_connections = self.user_connections.copy()
-                for username, exist_socks in temp_connections.items():
-                    if exist_socks == sock:
-                        del self.user_connections[username]
-                online_users = self.getOnlineUsers()
-                for sending_sock in self.user_connections.values():
-                    sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
-                sock.close()  # 关闭连接
+                self.closeConnection(sock, data.address)
                 return
             if data.inbytes:
                 self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
             else:
-                print(f'Connection closed: {data.address[0]}:{data.address[1]}')
-                self.select.unregister(sock)  # 如果没有消息，则从IO多路复用中移除连接
-                for username, exist_socks in self.user_connections.items():
-                    if exist_socks == sock:
-                        del self.user_connections[username]
-                online_users = self.getOnlineUsers()
-                for sending_sock in self.user_connections.values():
-                    sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
-                sock.close()
+                self.closeConnection(sock, data.address)  # 如果读取失败，则关闭连接
                 return
 
         if mask & selectors.EVENT_WRITE:  # 如果可写，向客户端发送消息
             if self.need_handle_messages:
                 for processing_message in self.need_handle_messages:
-                    self.processMessage(processing_message, sock, data.address)
+                    try:
+                        self.processMessage(processing_message, sock, data.address)
+                    except ConnectionResetError:
+                        self.closeConnection(sock, data.address)
+                        return
                 self.need_handle_messages = []
 
     def processMessage(self, message, sock, address=None):
@@ -119,7 +106,11 @@ class Server:
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
             return
-        recv_data = unpack(message.decode('utf-8'))  # 解码消息
+        try:
+            recv_data = unpack(message.decode('utf-8'))  # 解码消息
+        except UnicodeDecodeError:
+            print('A message is not in utf-8 encoding.')
+            recv_data = [None]
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
             if recv_data[1] == 'Lhat! Chatting Room':  # 群聊
                 print(message)
@@ -141,7 +132,7 @@ class Server:
             else:
                 user = recv_data[1]  # 否则使用客户端设定的用户名
             tag = 0
-            for username in self.user_connections.keys():
+            for username in self.user_connections:
                 if username == user:  # 如果重名，则添加数字
                     tag += 1
                     user = user + str(tag)
@@ -160,6 +151,24 @@ class Server:
         for user in self.user_connections.keys():
             online_users.append(user)
         return online_users
+
+
+    def closeConnection(self, sock, address):
+        """
+        关闭连接
+        :param sock: 已知的无效连接
+        :param address: 连接的地址
+        :return: 无返回值
+        """
+        print(f'Connection closed: {address[0]}:{address[1]}')
+        self.select.unregister(sock)  # 从IO多路复用中移除连接
+        for connections in list(self.user_connections):
+            if self.user_connections[connections] == sock:
+                del self.user_connections[connections]
+        online_users = self.getOnlineUsers()
+        for sending_sock in self.user_connections.values():
+            sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+        sock.close()
 
 
 if __name__ == '__main__':
