@@ -133,6 +133,7 @@ class Server:
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
+            time.sleep(0.001)
             if recv_data[1] == '用户名不存在':  # 如果客户端未设定用户名
                 user = address[0] + ':' + address[1]  # 直接使用IP和端口号
             else:
