@@ -11,6 +11,7 @@ import settings  # 导入配置文件
 
 ip = settings.ip_address
 port = settings.network_port
+default_room = settings.default_chatting_room
 
 
 class Server:
@@ -21,8 +22,11 @@ class Server:
         """
         初始化服务器
         """
+        print('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
+        print('Done!')
+        print('Now the server can be ran.')
 
     def run(self):
         """
@@ -32,6 +36,7 @@ class Server:
         # main_sock是用于监听的socket，用于接收客户端的连接
         self.main_sock.bind((ip, port))
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
+        print('================================')
         print(f'Running server on {ip}:{port}')
         print('  To change the ip address, \n  please visit settings.py')
         print('Waiting for connection...')
@@ -101,7 +106,7 @@ class Server:
         :param address: 客户端地址
         :return: 无返回值
         """
-        if not message:  # 服务端发送了空消息，于是直接断连
+        if not message:  # 客户端发送了空消息，于是直接断连
             print(f'Connection closed: {address[0]}:{address[1]}')
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
@@ -112,12 +117,12 @@ class Server:
             print('A message is not in utf-8 encoding.')
             recv_data = [None]
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
-            if recv_data[1] == 'Lhat! Chatting Room':  # 群聊
+            if recv_data[1] == default_room:  # 群聊
                 print(message)
                 for sending_sock in self.user_connections.items():  # 直接发送
                     sending_sock[1].send(message)
             else:
-                print(f'Private Message received [{recv_data[3]}]')
+                print(f'Private message received [{recv_data[3]}]')
                 for username, sending_sock in self.user_connections.items():  # 私聊
                     if username == recv_data[1] or username == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
@@ -127,6 +132,7 @@ class Server:
                 sending_sock[1].send(message)
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
+            sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
             if recv_data[1] == '用户名不存在':  # 如果客户端未设定用户名
                 user = address[0] + ':' + address[1]  # 直接使用IP和端口号
             else:
@@ -139,9 +145,10 @@ class Server:
                     user = user + str(tag)
                 # 将用户名加入连接列表
             self.user_connections[user] = sock  # 将用户名和连接加入连接列表
+
             online_users = self.getOnlineUsers()  # 获取在线用户
             for sending_sock in self.user_connections.values():  # 开始发送用户列表
-                sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+                sending_sock.send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
 
     def getOnlineUsers(self):
         """
@@ -167,7 +174,7 @@ class Server:
                 del self.user_connections[connections]  # 删除连接
         online_users = self.getOnlineUsers()
         for sending_sock in self.user_connections.values():
-            sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
+            sending_sock.send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
         sock.close()
 
 
