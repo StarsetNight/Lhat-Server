@@ -76,7 +76,7 @@ class Server:
             except ConnectionResetError:  # 如果读取失败，则说明客户端已断开连接
                 self.closeConnection(sock, data.address)
                 return
-            if data.inbytes:
+            if data.inbytes:  # 如果消息列表不为空
                 self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
             else:
@@ -88,7 +88,7 @@ class Server:
                 for processing_message in self.need_handle_messages:
                     try:
                         self.processMessage(processing_message, sock, data.address)
-                    except ConnectionResetError:
+                    except ConnectionResetError:  # 服务端断开连接
                         self.closeConnection(sock, data.address)
                         return
                 self.need_handle_messages = []
@@ -101,7 +101,7 @@ class Server:
         :param address: 客户端地址
         :return: 无返回值
         """
-        if not message:
+        if not message:  # 服务端发送了空消息，于是直接断连
             print(f'Connection closed: {address[0]}:{address[1]}')
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
@@ -131,15 +131,16 @@ class Server:
                 user = address[0] + ':' + address[1]  # 直接使用IP和端口号
             else:
                 user = recv_data[1]  # 否则使用客户端设定的用户名
+                user = user[:20]  # 如果用户名过长，则截断
             tag = 0
             for username in self.user_connections:
                 if username == user:  # 如果重名，则添加数字
                     tag += 1
                     user = user + str(tag)
                 # 将用户名加入连接列表
-            self.user_connections[user] = sock
-            online_users = self.getOnlineUsers()
-            for sending_sock in self.user_connections.values():
+            self.user_connections[user] = sock  # 将用户名和连接加入连接列表
+            online_users = self.getOnlineUsers()  # 获取在线用户
+            for sending_sock in self.user_connections.values():  # 开始发送用户列表
                 sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
 
     def getOnlineUsers(self):
@@ -152,7 +153,6 @@ class Server:
             online_users.append(user)
         return online_users
 
-
     def closeConnection(self, sock, address):
         """
         关闭连接
@@ -160,11 +160,11 @@ class Server:
         :param address: 连接的地址
         :return: 无返回值
         """
-        print(f'Connection closed: {address[0]}:{address[1]}')
+        print(f'Connection closed: {address[0]}:{address[1]}')  # 日志
         self.select.unregister(sock)  # 从IO多路复用中移除连接
         for connections in list(self.user_connections):
             if self.user_connections[connections] == sock:
-                del self.user_connections[connections]
+                del self.user_connections[connections]  # 删除连接
         online_users = self.getOnlineUsers()
         for sending_sock in self.user_connections.values():
             sending_sock.send(pack(json.dumps(online_users), None, 'Lhat! Chatting Room', 'USER_MANIFEST'))
