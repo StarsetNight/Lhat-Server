@@ -1,3 +1,4 @@
+import re
 import socket
 import selectors  # IO多路复用
 import os
@@ -22,6 +23,8 @@ class Server:
         """
         初始化服务器
         """
+        self.user_connections = {}  # 创建一个空的用户连接列表
+        self.need_handle_messages = []  # 创建一个空的消息队列
         print('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
@@ -41,8 +44,6 @@ class Server:
         print('  To change the ip address, \n  please visit settings.py')
         print('Waiting for connection...')
         self.main_sock.setblocking(False)  # 设置为非阻塞
-        self.need_handle_messages = []  # 创建一个空的消息队列
-        self.user_connections = {}  # 创建一个空的用户连接列表
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
         while True:
             events = self.select.select(timeout=None)  # 阻塞等待IO事件
@@ -82,7 +83,12 @@ class Server:
                 self.closeConnection(sock, data.address)
                 return
             if data.inbytes:  # 如果消息列表不为空
-                self.need_handle_messages.append(data.inbytes)
+                try:
+                    received_bytes = data.inbytes.decode('utf-8')
+                except UnicodeDecodeError:
+                    print('A message is not in utf-8 encoding.')
+                    received_bytes = None
+                self.need_handle_messages += (re.findall(r'\{.*?}', received_bytes))  # 添加到消息队列
                 data.inbytes = b''
             else:
                 self.closeConnection(sock, data.address)  # 如果读取失败，则关闭连接
@@ -92,7 +98,11 @@ class Server:
             if self.need_handle_messages:
                 for processing_message in self.need_handle_messages:
                     try:
-                        self.processMessage(processing_message, sock, data.address)
+                        # 如果该项为空，就转到下一个遍历，反之处理它
+                        if processing_message:
+                            self.processMessage(processing_message, sock, data.address)
+                        else:
+                            continue
                     except ConnectionResetError:  # 服务端断开连接
                         self.closeConnection(sock, data.address)
                         return
@@ -111,29 +121,24 @@ class Server:
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
             return
-        try:
-            recv_data = unpack(message.decode('utf-8'))  # 解码消息
-        except UnicodeDecodeError:
-            print('A message is not in utf-8 encoding.')
-            recv_data = [None]
+        recv_data = unpack(message)  # 解码消息
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
             if recv_data[1] == default_room:  # 群聊
                 print(message)
                 for sending_sock in self.user_connections.items():  # 直接发送
-                    sending_sock[1].send(message)
+                    sending_sock[1].send(message.encode('utf-8'))
             else:
                 print(f'Private message received [{recv_data[3]}]')
                 for username, sending_sock in self.user_connections.items():  # 私聊
                     if username == recv_data[1] or username == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
-                        sending_sock.send(message)  # 发送给该用户
+                        sending_sock.send(message.encode('utf-8'))  # 发送给该用户
         elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.items():
-                sending_sock[1].send(message)
+                sending_sock[1].send(message.encode('utf-8'))
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
-            time.sleep(0.001)
             if recv_data[1] == '用户名不存在':  # 如果客户端未设定用户名
                 user = address[0] + ':' + address[1]  # 直接使用IP和端口号
             else:
