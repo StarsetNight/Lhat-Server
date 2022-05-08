@@ -84,11 +84,11 @@ class Server:
                 return
             if data.inbytes:  # 如果消息列表不为空
                 try:
-                    received_bytes = data.inbytes.decode('utf-8')
+                    data.inbytes.decode('utf-8')
                 except UnicodeDecodeError:
                     print('A message is not in utf-8 encoding.')
-                    received_bytes = None
-                self.need_handle_messages += (re.findall(r'\{.*?}', received_bytes))  # 添加到消息队列
+                else:
+                    self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
             else:
                 self.closeConnection(sock, data.address)  # 如果读取失败，则关闭连接
@@ -126,16 +126,16 @@ class Server:
             if recv_data[1] == default_room:  # 群聊
                 print(message)
                 for sending_sock in self.user_connections.items():  # 直接发送
-                    sending_sock[1].send(message.encode('utf-8'))
+                    sending_sock[1].send(message)
             else:
                 print(f'Private message received [{recv_data[3]}]')
                 for username, sending_sock in self.user_connections.items():  # 私聊
                     if username == recv_data[1] or username == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
-                        sending_sock.send(message.encode('utf-8'))  # 发送给该用户
+                        sending_sock.send(message)  # 发送给该用户
         elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.items():
-                sending_sock[1].send(message.encode('utf-8'))
+                sending_sock[1].send(message)
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
