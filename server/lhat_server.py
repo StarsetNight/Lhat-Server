@@ -107,6 +107,7 @@ class Server:
                         self.closeConnection(sock, data.address)
                         return
                 self.need_handle_messages = []
+                time.sleep(0.0002)  # 粘包现象很恶心，sleep暂时能解决
 
     def processMessage(self, message, sock, address=None):
         """
