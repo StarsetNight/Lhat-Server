@@ -154,6 +154,7 @@ class Server:
             self.user_connections[user] = sock  # 将用户名和连接加入连接列表
 
             online_users = self.getOnlineUsers()  # 获取在线用户
+            time.sleep(0.0005)  # 等待一下，否则可能会出现粘包
             for sending_sock in self.user_connections.values():  # 开始发送用户列表
                 sending_sock.send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
 
