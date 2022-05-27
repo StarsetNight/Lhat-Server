@@ -41,12 +41,15 @@ class User:
         """
         return self.__permission
 
-    def setPermission(self, permission):
+    def setPermission(self, permission, passwd):
         """
         设置客户端的权限
         """
-        self.__permission = permission
-        self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
+        if password == passwd:
+            self.__permission = permission
+            self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
+        else:
+            print('Incorrect password!')
 
     def getId(self):
         """
