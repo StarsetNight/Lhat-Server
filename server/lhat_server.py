@@ -28,6 +28,7 @@ class User:
         self._socket = conn  # 客户端的socket
         self._address = address  # 客户端的ip地址
         self._username = name  # 客户端的用户名
+        self._rooms = [default_room]  # 客户端所在的房间
         self.__id_num = id_num  # 客户端的id号
         if password == passwd:
             self.__permission = permission
@@ -35,7 +36,7 @@ class User:
             print('Incorrect password!')
             self.__permission = 'User'
 
-    def getPermission(self):
+    def getPermission(self) -> str:
         """
         获取客户端的权限
         """
@@ -51,23 +52,50 @@ class User:
         else:
             print('Incorrect password!')
 
-    def getId(self):
+    def getId(self) -> int:
         """
         获取客户端的id号
         """
         return self.__id_num
 
-    def getSocket(self):
+    def getSocket(self) -> socket.socket:
         """
         获取客户端的socket
         """
         return self._socket
 
-    def getUserName(self):
+    def getUserName(self) -> str:
         """
         获取客户端的用户名
         """
         return self._username
+
+    def getRooms(self) -> list:
+        """
+        获取客户端所在的房间
+        """
+        return self._rooms
+
+    def addRoom(self, room: str):
+        """
+        客户端加入房间
+        :param room: 房间名，字符串
+        """
+        if room not in self._rooms:
+            self._rooms.append(room)
+        else:
+            print('The room already exists!')
+
+    def removeRoom(self, room: str):
+        """
+        客户端退出房间
+        """
+        if room == default_room:
+            print('Leaving the default room is not allowed!')
+        elif room in self._rooms:
+            self._rooms.remove(room)
+        else:
+            print('The room does not exist!')
 
 
 class Server:
@@ -78,14 +106,16 @@ class Server:
         """
         初始化服务器
         """
+        self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
+        self.chatting_rooms = [default_room]  # 创建一个聊天室列表
         self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
-        print('Initializing server... ', end='')
+        self.log('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
-        print('Done!')
-        print('Now the server can be ran.')
+        self.log('Done!', show_time=False)
+        self.log('Now the server can be ran.')
 
     def run(self):
         """
@@ -95,10 +125,10 @@ class Server:
         # main_sock是用于监听的socket，用于接收客户端的连接
         self.main_sock.bind((ip, port))
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
-        print('================================')
-        print(f'Running server on {ip}:{port}')
-        print('  To change the ip address, \n  please visit settings.py')
-        print('Waiting for connection...')
+        self.log('================================')
+        self.log(f'Running server on {ip}:{port}')
+        self.log('  To change the ip address, \n  please visit settings.py')
+        self.log('Waiting for connection...')
         self.main_sock.setblocking(False)  # 设置为非阻塞
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
         while True:
@@ -110,14 +140,14 @@ class Server:
                     self.serveClient(key, mask)  # 处理连接
             time.sleep(0.0001)  # 因为是阻塞的，所以sleep不会漏消息，同时降低负载
 
-    def createConnection(self, sock):
+    def createConnection(self, sock: socket.socket):
         """
         创建一个新连接
         :param sock: 创建的socket对象
         :return: 无返回值
         """
         conn, address = sock.accept()  # 接收连接，并创建一个新的连接
-        print(f'Connection established: {address[0]}:{address[1]}')
+        self.log(f'Connection established: {address[0]}:{address[1]}')
         conn.setblocking(False)  # 设置为非阻塞
         namespace = types.SimpleNamespace(address=address, inbytes=b'')  # 创建一个空的命名空间，用于存储连接信息
         self.select.register(conn, selectors.EVENT_READ | selectors.EVENT_WRITE,
@@ -142,7 +172,7 @@ class Server:
                 try:
                     data.inbytes.decode('utf-8')
                 except UnicodeDecodeError:
-                    print('A message is not in utf-8 encoding.')
+                    self.log('A message is not in utf-8 encoding.')
                 else:
                     self.need_handle_messages.append(data.inbytes)
                 data.inbytes = b''
@@ -165,7 +195,7 @@ class Server:
                 self.need_handle_messages = []
                 time.sleep(0.0002)  # 粘包现象很恶心，sleep暂时能解决
 
-    def processMessage(self, message, sock, address=None):
+    def processMessage(self, message: str, sock: socket.socket, address=None):
         """
         处理消息，让服务器决定如何处理
         :param message: 待处理的消息
@@ -174,16 +204,23 @@ class Server:
         :return: 无返回值
         """
         if not message:  # 客户端发送了空消息，于是直接断连
-            print(f'Connection closed: {address[0]}:{address[1]}')
+            self.log(f'Connection closed: {address[0]}:{address[1]}')
             self.select.unregister(sock)  # 从IO多路复用中移除连接
             sock.close()  # 关闭连接
             return
         recv_data = unpack(message)  # 解码消息
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
-            if recv_data[1] == default_room:  # 群聊
-                print(message)
+            if recv_data[1] == default_room:  # 默认聊天室的群聊
+                self.record(message)
                 for sending_sock in self.user_connections.values():  # 直接发送
                     sending_sock.getSocket().send(message)
+            # 这里可能有点疑惑，默认聊天室明明也在chatting_rooms里，这里不会出问题吗？
+            # 回答是，不会的。因为只要第一个if条件过不去，那么这就不是默认聊天室了，而是其他聊天室或私聊
+            elif recv_data[1] in self.chatting_rooms:  # 如果是其他聊天室的群聊
+                print(f'Other room\'s message received: {recv_data[3]}')
+                for sending_sock in self.user_connections.values():
+                    if recv_data[1] in sending_sock.getRooms():  # 如果该用户在该聊天室
+                        sending_sock.getSocket().send(message)
             else:
                 print(f'Private message received [{recv_data[3]}]')
                 for sending_sock in self.user_connections.values():  # 私聊
@@ -199,14 +236,14 @@ class Server:
             sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
             if recv_data[1] == '用户名不存在':  # 如果客户端未设定用户名
                 user = address[0] + ':' + address[1]  # 直接使用IP和端口号
+            elif recv_data[1] in self.chatting_rooms:  # 如果用户名已经存在
+                user = recv_data[1] + ':' + address[1]  # 用户名和端口号
             else:
                 user = recv_data[1]  # 否则使用客户端设定的用户名
-                user = user[:20]  # 如果用户名过长，则截断
-            tag = 0
+            user = user[:20]  # 如果用户名过长，则截断
             for client in self.user_connections.values():
                 if client.getUserName() == user:  # 如果重名，则添加数字
-                    tag += 1
-                    user = user + str(tag)
+                    user += address[1]
                 # 将用户名加入连接列表
 
             # conn, address, permission, passwd, id_num
@@ -219,7 +256,7 @@ class Server:
             for sending_sock in self.user_connections.values():  # 开始发送用户列表
                 sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
 
-    def getOnlineUsers(self):
+    def getOnlineUsers(self) -> list:
         """
         获取在线用户
         :return: 在线用户列表
@@ -229,14 +266,14 @@ class Server:
             online_users.append(user.getUserName())
         return online_users
 
-    def closeConnection(self, sock, address):
+    def closeConnection(self, sock: socket.socket, address: tuple):
         """
         关闭连接
         :param sock: 已知的无效连接
         :param address: 连接的地址
         :return: 无返回值
         """
-        print(f'Connection closed: {address[0]}:{address[1]}')  # 日志
+        self.log(f'Connection closed: {address[0]}:{address[1]}')  # 日志
         self.select.unregister(sock)  # 从IO多路复用中移除连接
         for cid in list(self.user_connections):
             if self.user_connections[cid].getSocket() == sock:
@@ -245,6 +282,33 @@ class Server:
         for sending_sock in self.user_connections.values():
             sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
         sock.close()
+
+    @staticmethod
+    def log(content: str, end='\n', show_time=True):
+        """
+        日志
+        :param content: 日志内容
+        :param end: 日志结尾
+        :param show_time: 是否显示时间
+        :return: 无返回值
+        """
+        if show_time:
+            print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}', end=end)
+        else:
+            print(content, end=end)
+        with open('lhat_server.log', 'a') as f:
+            f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
+
+    @staticmethod
+    def record(message):
+        """
+        记录
+        :param message: 记录内容
+        :return: 无返回值
+        """
+        print(message)
+        with open('lhat_chatting_record.txt', 'a') as f:
+            f.write(message.decode('utf-8') + '\n')
 
 
 if __name__ == '__main__':
