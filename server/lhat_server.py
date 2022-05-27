@@ -13,6 +13,58 @@ import settings  # 导入配置文件
 ip = settings.ip_address
 port = settings.network_port
 default_room = settings.default_chatting_room
+password = settings.password
+
+
+class User:
+    """
+    用户类，用于存储每个连接到本服务器的客户端的信息。
+    """
+
+    def __init__(self, conn, address, permission, passwd, id_num, name):
+        """
+        初始化客户端
+        """
+        self._socket = conn  # 客户端的socket
+        self._address = address  # 客户端的ip地址
+        self._username = name  # 客户端的用户名
+        self.__id_num = id_num  # 客户端的id号
+        if password == passwd:
+            self.__permission = permission
+        else:
+            print('Incorrect password!')
+            self.__permission = 'User'
+
+    def getPermission(self):
+        """
+        获取客户端的权限
+        """
+        return self.__permission
+
+    def setPermission(self, permission):
+        """
+        设置客户端的权限
+        """
+        self.__permission = permission
+        self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
+
+    def getId(self):
+        """
+        获取客户端的id号
+        """
+        return self.__id_num
+
+    def getSocket(self):
+        """
+        获取客户端的socket
+        """
+        return self._socket
+
+    def getUserName(self):
+        """
+        获取客户端的用户名
+        """
+        return self._username
 
 
 class Server:
@@ -25,6 +77,7 @@ class Server:
         """
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
+        self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
         print('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
@@ -126,17 +179,18 @@ class Server:
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
             if recv_data[1] == default_room:  # 群聊
                 print(message)
-                for sending_sock in self.user_connections.items():  # 直接发送
-                    sending_sock[1].send(message)
+                for sending_sock in self.user_connections.values():  # 直接发送
+                    sending_sock.getSocket().send(message)
             else:
                 print(f'Private message received [{recv_data[3]}]')
-                for username, sending_sock in self.user_connections.items():  # 私聊
-                    if username == recv_data[1] or username == recv_data[2]:  # 遍历所有用户，找到对应用户
+                for sending_sock in self.user_connections.values():  # 私聊
+                    if sending_sock.getUserName() == recv_data[1] or \
+                            sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
-                        sending_sock.send(message)  # 发送给该用户
+                        sending_sock.getSocket().send(message)  # 发送给该用户
         elif recv_data[0] == 'DO_NOT_PROCESS':
-            for sending_sock in self.user_connections.items():
-                sending_sock[1].send(message)
+            for sending_sock in self.user_connections.values():
+                sending_sock.getSocket().send(message)
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
@@ -146,17 +200,21 @@ class Server:
                 user = recv_data[1]  # 否则使用客户端设定的用户名
                 user = user[:20]  # 如果用户名过长，则截断
             tag = 0
-            for username in self.user_connections:
-                if username == user:  # 如果重名，则添加数字
+            for client in self.user_connections.values():
+                if client.getUserName() == user:  # 如果重名，则添加数字
                     tag += 1
                     user = user + str(tag)
                 # 将用户名加入连接列表
-            self.user_connections[user] = sock  # 将用户名和连接加入连接列表
+
+            # conn, address, permission, passwd, id_num
+            self.user_connections[self.client_id] = \
+                User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
+            self.client_id += 1
 
             online_users = self.getOnlineUsers()  # 获取在线用户
             time.sleep(0.0005)  # 等待一下，否则可能会出现粘包
             for sending_sock in self.user_connections.values():  # 开始发送用户列表
-                sending_sock.send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
+                sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
 
     def getOnlineUsers(self):
         """
@@ -164,8 +222,8 @@ class Server:
         :return: 在线用户列表
         """
         online_users = []
-        for user in self.user_connections.keys():
-            online_users.append(user)
+        for user in self.user_connections.values():
+            online_users.append(user.getUserName())
         return online_users
 
     def closeConnection(self, sock, address):
@@ -177,12 +235,12 @@ class Server:
         """
         print(f'Connection closed: {address[0]}:{address[1]}')  # 日志
         self.select.unregister(sock)  # 从IO多路复用中移除连接
-        for connections in list(self.user_connections):
-            if self.user_connections[connections] == sock:
-                del self.user_connections[connections]  # 删除连接
+        for cid in list(self.user_connections):
+            if self.user_connections[cid].getSocket() == sock:
+                del self.user_connections[cid]  # 删除连接
         online_users = self.getOnlineUsers()
         for sending_sock in self.user_connections.values():
-            sending_sock.send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
+            sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
         sock.close()
 
 
