@@ -14,6 +14,7 @@ ip = settings.ip_address
 port = settings.network_port
 default_room = settings.default_chatting_room
 password = settings.password
+root_password = settings.root_password
 
 
 class User:
@@ -42,11 +43,14 @@ class User:
         """
         return self.__permission
 
-    def setPermission(self, permission, passwd):
+    def setPermission(self, permission='User', passwd=None):
         """
         设置客户端的权限
         """
-        if password == passwd:
+        if permission == 'User':
+            self.__permission = 'User'
+            self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
+        if root_password == passwd:
             self.__permission = permission
             self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
         else:
@@ -96,6 +100,12 @@ class User:
             self._rooms.remove(room)
         else:
             print('The room does not exist!')
+
+    def getAddress(self) -> tuple:
+        """
+        获取客户端的ip地址
+        """
+        return self._address
 
 
 class Server:
@@ -228,6 +238,99 @@ class Server:
                             sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
                         sending_sock.getSocket().send(message)  # 发送给该用户
+
+        elif recv_data[0] == 'COMMAND':
+            command = recv_data[2].split(' ')  # 分割命令
+            if command[0] == 'room':
+                room_name = ' '.join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
+                if command[1] == 'create':
+                    self.log(f'{recv_data[1]} create room {room_name}')
+                    if room_name in self.chatting_rooms or room_name in self.user_connections:
+                        self.log(f'Room {room_name} already exists, abort creating.')
+                        sock.send(pack(f'{room_name} 已存在，无法创建。', 'Server', None, 'TEXT_MESSAGE'))
+                    else:
+                        self.chatting_rooms.append(room_name)
+                        self.log(f'Room {room_name} created.')
+                        for name, user in self.user_connections.items():
+                            if name == recv_data[1]:
+                                user.addRoom(room_name)
+                                sock.send(pack(f'成功创建聊天室 {room_name}。', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == 'join':
+                    self.log(f'{recv_data[1]} join room {room_name}')
+                    if room_name in self.chatting_rooms:
+                        for name, user in self.user_connections.items():
+                            if name == recv_data[1]:
+                                user.addRoom(room_name)
+                    else:
+                        self.log(f'Room {room_name} does not exist, abort joining.')
+                        sock.send(pack(f'{room_name} 不存在，无法加入。', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == 'list':
+                    self.log(f'{recv_data[1]} want to check online rooms.')
+                    sock.send(pack(f'当前聊天室有：{self.chatting_rooms}', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == 'leave':
+                    self.log(f'{recv_data[1]} want to leave room {room_name}')
+                    if room_name in self.chatting_rooms:
+                        for name, user in self.user_connections.items():
+                            if name == recv_data[1]:
+                                user.removeRoom(room_name)
+                                sock.send(pack(f'你已成功退出聊天室 {room_name}。', 'Server', None, 'TEXT_MESSAGE'))
+                    else:
+                        self.log(f'Room {room_name} does not exist, abort leaving.')
+                        sock.send(pack(f'{room_name} 不存在，无法退出。', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == 'delete':
+                    self.log(f'{recv_data[1]} delete room {room_name}')
+                    if self.user_connections[recv_data[1]].getPermission() == 'Admin':
+                        if room_name in self.chatting_rooms:
+                            self.chatting_rooms.remove(room_name)
+                            self.log(f'Room {room_name} deleted.')
+                            for user in self.user_connections.values():
+                                if room_name in user.getRooms():
+                                    user.removeRoom(room_name)
+                                    user.getSocket().send(pack(f'{room_name} 聊天室已被管理员删除，已自动退出本聊天室。',
+                                                               'Server', None, 'TEXT_MESSAGE'))
+                                sock.send(pack(f'已删除聊天室 {room_name}。', 'Server', None, 'TEXT_MESSAGE'))
+                        else:
+                            self.log(f'Room {room_name} does not exist, abort deleting.')
+                            sock.send(pack(f'{room_name} 不存在，无法删除。', 'Server', None, 'TEXT_MESSAGE'))
+                    else:
+                        self.log(f'{recv_data[1]} do not have the permission to delete {room_name}.')
+                        sock.send(pack(f'你没有权限删除聊天室 {room_name}。',
+                                       'Server', None, 'TEXT_MESSAGE'))
+            elif command[0] == 'root':
+                self.log(f'{recv_data[1]} want to change his permission.')
+                if command[1] == root_password:
+                    self.user_connections[recv_data[1]].setPermission('Admin', command[1])
+                    self.log(f'{recv_data[1]} permission changed to Admin.')
+                    sock.send(pack(f'你已获得管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
+                else:
+                    self.user_connections[recv_data[1]].setPermission('User')
+                    self.log(f'{recv_data[1]} permission changed to User.')
+                    sock.send(pack(f'你已放弃管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
+
+            elif command[0] == 'kick':
+                self.log(f'{recv_data[1]} want to kick {command[1]}.')
+                if self.user_connections[recv_data[1]].getPermission() == 'Admin':
+                    if command[1] in self.user_connections and \
+                            self.user_connections[command[1]].getPermission() != 'Admin':
+                        self.user_connections[command[1]].getSocket().send(pack(f'你已被管理员踢出服务器。',
+                                                                                'Server', None, 'TEXT_MESSAGE'))
+                        self.closeConnection(self.user_connections[command[1]].getSocket(),
+                                             self.user_connections[command[1]].getAddress())
+                        self.log(f'{command[1]} kicked.')
+                        sock.send(pack(f'你已成功踢出 {command[1]}。', 'Server', None, 'TEXT_MESSAGE'))
+                    else:
+                        if recv_data[1] == command[1]:
+                            self.log(f'{recv_data[1]} tried to kick himself.')
+                            sock.send(pack(f'自己踢自己？搁这卡bug呢？', 'Server', None, 'TEXT_MESSAGE'))
+                            for sending_sock in self.user_connections.values():  # 直接发送
+                                sending_sock.getSocket().send(pack(f'[新闻] 人类迷惑行为：{recv_data[1]} 试图把自己踢出服务器。',
+                                                                   'Server', None, 'TEXT_MESSAGE'))
+                        else:
+                            self.log(f'{command[1]} does not exist, abort kicking.')
+                            sock.send(pack(f'{command[1]} 不存在或为管理员，无法踢出。', 'Server', None, 'TEXT_MESSAGE'))
+                else:
+                    self.log(f'{recv_data[1]} do not have the permission to kick {command[1]}.')
+                    sock.send(pack(f'你没有权限踢出 {command[1]}，先看看自己有没有这个权限再说吧。', 'Server', None, 'TEXT_MESSAGE'))
         elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.values():
                 sending_sock.getSocket().send(message)
@@ -246,8 +349,8 @@ class Server:
                     user += address[1]
                 # 将用户名加入连接列表
 
-            # conn, address, permission, passwd, id_num
-            self.user_connections[self.client_id] = \
+            # User类的实例化参数：conn, address, permission, passwd, id_num
+            self.user_connections[user] = \
                 User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
             self.client_id += 1
 
@@ -302,13 +405,16 @@ class Server:
     @staticmethod
     def record(message):
         """
-        记录
+        记录聊天消息
         :param message: 记录内容
         :return: 无返回值
         """
         print(message)
         with open('lhat_chatting_record.txt', 'a') as f:
-            f.write(message.decode('utf-8') + '\n')
+            if isinstance(message, str):
+                f.write(message + '\n')
+            elif isinstance(message, bytes):
+                f.write(message.decode('utf-8') + '\n')
 
 
 if __name__ == '__main__':
