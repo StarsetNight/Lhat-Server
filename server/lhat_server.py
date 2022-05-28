@@ -15,6 +15,8 @@ port = settings.network_port
 default_room = settings.default_chatting_room
 password = settings.password
 root_password = settings.root_password
+logable = settings.log
+recordable = settings.record
 
 
 class User:
@@ -399,8 +401,9 @@ class Server:
             print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}', end=end)
         else:
             print(content, end=end)
-        with open('lhat_server.log', 'a') as f:
-            f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
+        if logable:
+            with open('lhat_server.log', 'a') as f:
+                f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
 
     @staticmethod
     def record(message):
@@ -410,11 +413,12 @@ class Server:
         :return: 无返回值
         """
         print(message)
-        with open('lhat_chatting_record.txt', 'a') as f:
-            if isinstance(message, str):
-                f.write(message + '\n')
-            elif isinstance(message, bytes):
-                f.write(message.decode('utf-8') + '\n')
+        if recordable:
+            with open('lhat_chatting_record.txt', 'a') as f:
+                if isinstance(message, str):
+                    f.write(message + '\n')
+                elif isinstance(message, bytes):
+                    f.write(message.decode('utf-8') + '\n')
 
 
 if __name__ == '__main__':
