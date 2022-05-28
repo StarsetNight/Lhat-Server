@@ -302,6 +302,7 @@ class Server:
                                        'Server', None, 'TEXT_MESSAGE'))
             elif command[0] == 'root':
                 self.log(f'{recv_data[1]} want to change his permission.')
+                command.append('')
                 if command[1] == root_password:
                     self.user_connections[recv_data[1]].setPermission('Admin', command[1])
                     self.log(f'{recv_data[1]} permission changed to Admin.')
