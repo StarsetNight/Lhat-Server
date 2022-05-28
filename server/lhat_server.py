@@ -126,6 +126,7 @@ class Server:
         self.log('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
         self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
+        self.main_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.log('Done!', show_time=False)
         self.log('Now the server can be ran.')
 
@@ -161,6 +162,7 @@ class Server:
         conn, address = sock.accept()  # 接收连接，并创建一个新的连接
         self.log(f'Connection established: {address[0]}:{address[1]}')
         conn.setblocking(False)  # 设置为非阻塞
+        conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)  # 设置为非延迟发送
         namespace = types.SimpleNamespace(address=address, inbytes=b'')  # 创建一个空的命名空间，用于存储连接信息
         self.select.register(conn, selectors.EVENT_READ | selectors.EVENT_WRITE,
                              data=namespace)  # 注册连接到IO多路复用，以便于多连接
@@ -205,7 +207,7 @@ class Server:
                         self.closeConnection(sock, data.address)
                         return
                 self.need_handle_messages = []
-                time.sleep(0.0002)  # 粘包现象很恶心，sleep暂时能解决
+                time.sleep(0.0005)  # 粘包现象很恶心，sleep暂时能解决
 
     def processMessage(self, message: str, sock: socket.socket, address=None):
         """
