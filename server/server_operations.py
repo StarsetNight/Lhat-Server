@@ -47,9 +47,9 @@ def unpack(json_message: str):
     except json.decoder.JSONDecodeError:
         return 'DO_NOT_PROCESS',
 
-    if message['type'] == 'TEXT_MESSAGE_ARTICLE':  # 如果是纯文本消息
-        if 'to' not in message or 'by' not in message or 'message' not in message:
-            return None,
+    if 'to' not in message or 'by' not in message or 'message' not in message:
+        return None,
+    if message['type'] == 'TEXT_MESSAGE':  # 如果是纯文本消息
         return 'TEXT_MESSAGE', message['to'], message['by'], message['time']
     elif message['type'] == 'USER_NAME':  # 如果是用户名称
         try:
@@ -57,5 +57,7 @@ def unpack(json_message: str):
             return message['type'], username
         except json.decoder.JSONDecodeError:
             return 'MANIFEST_NOT_JSON',
+    elif message['type'] == 'COMMAND':
+        return message['type'], message['by'], message['message']
     else:
         return 'UNKNOWN_MESSAGE_TYPE',
