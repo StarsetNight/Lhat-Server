@@ -5,6 +5,7 @@ import os
 import sys
 import json
 import types
+import threading
 
 from server_operations import *
 import settings  # 导入配置文件
@@ -17,6 +18,56 @@ password = settings.password
 root_password = settings.root_password
 logable = settings.log
 recordable = settings.record
+
+
+class FileClient:
+    """
+    文件客户端类，专门用于文件传输。
+    """
+    def __init__(self, conn, address, file_id, file_name, file_size):
+        """
+        初始化文件客户端类。
+        :param conn: 客户端连接
+        :param address: 客户端地址
+        :param file_id: 文件id
+        :param file_name: 文件名
+        :param file_size: 文件大小
+        """
+        self.connection = conn
+        self.address = address
+        self.file_id = file_id
+        self.file_name = file_name
+        self.file_size = file_size
+        self.file_path = os.path.join(os.getcwd(), 'files', file_name)
+
+    def startReceive(self, file_list):
+        """
+        开始接收文件。
+        """
+        if os.path.exists(self.file_path):
+            self.connection.send(bytes('FILE_EXIST', 'utf-8'))
+            self.connection.close()
+        else:
+            self.connection.send(bytes('RECEIVING', 'utf-8'))
+            with open(self.file_path, 'wb') as f:
+                while True:
+                    data = self.connection.recv(1024)
+                    if data == b'':
+                        break
+                    f.write(data)
+            self.connection.close()
+            file_list[self.file_id] = self.file_path
+
+    def startSend(self, recv_id, file_list):
+        if recv_id in file_list:
+            self.connection.send(bytes('SENDING', 'utf-8'))
+            with open(file_list[recv_id], 'rb') as f:
+                while True:
+                    data = f.read(1024)
+                    if data == b'':
+                        break
+                    self.connection.send(data)
+            self.connection.close()
 
 
 class User:
@@ -223,7 +274,7 @@ class Server:
             sock.close()  # 关闭连接
             return
         recv_data = unpack(message)  # 解码消息
-        if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'FILE_RECV_DATA':  # 如果能正常解析，则进行处理
+        if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'COLOR_MESSAGE':  # 如果能正常解析，则进行处理
             if recv_data[1] == default_room:  # 默认聊天室的群聊
                 self.record(message)
                 for sending_sock in self.user_connections.values():  # 直接发送
@@ -318,10 +369,13 @@ class Server:
                     self.user_connections[recv_data[1]].setPermission('Admin', command[1])
                     self.log(f'{recv_data[1]} permission changed to Admin.')
                     sock.send(pack(f'你已获得最高管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
-                else:
+                elif not command[1]:
                     self.user_connections[recv_data[1]].setPermission('User')
                     self.log(f'{recv_data[1]} permission changed to User.')
                     sock.send(pack(f'你已放弃最高管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
+                else:
+                    self.log(f'{recv_data[1]} password is incorrect.')
+                    sock.send(pack(f'最高管理员登录密码错误。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'manager':
                 operate_user = ''.join(command[2:])
@@ -348,8 +402,12 @@ class Server:
                         self.log(f'{recv_data[1]} wants to list all managers.')
                         sock.send(pack(json.dumps(self.getManagers()), 'Server', None, 'MANAGER_LIST'))
                 else:
-                    self.log(f'{recv_data[1]} do not have the permission to manage users.')
-                    sock.send(pack(f'你没有最高权限以用于管理用户。', 'Server', None, 'TEXT_MESSAGE'))
+                    if command[1] == 'list':
+                        self.log(f'{recv_data[1]} wants to list all managers.')
+                        sock.send(pack(json.dumps(self.getManagers()), 'Server', None, 'MANAGER_LIST'))
+                    else:
+                        self.log(f'{recv_data[1]} do not have the permission to manage users.')
+                        sock.send(pack(f'你没有最高权限以用于管理用户。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'kick':
                 self.log(f'{recv_data[1]} wants to kick {" ".join(command[1:])}.')
@@ -381,28 +439,29 @@ class Server:
                 sending_sock.getSocket().send(message)
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
-            sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
-            if recv_data[1] == '用户名不存在' or not recv_data[1]:  # 如果客户端未设定用户名
-                user = address[0] + ':' + address[1]  # 直接使用IP和端口号
-            elif recv_data[1] in self.chatting_rooms:  # 如果用户名已经存在
-                user = recv_data[1] + ':' + address[1]  # 用户名和端口号
-            else:
-                user = recv_data[1]  # 否则使用客户端设定的用户名
-            user = user[:20]  # 如果用户名过长，则截断
-            for client in self.user_connections.values():
-                if client.getUserName() == user:  # 如果重名，则添加数字
-                    user += address[1]
-                # 将用户名加入连接列表
+            threading.Thread(target=self.processNewLogin, args=(sock, address, recv_data[1])).start()
 
-            # User类的实例化参数：conn, address, permission, passwd, id_num
-            self.user_connections[user] = \
-                User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
-            self.client_id += 1
+    def processNewLogin(self, sock, address, user):
+        """处理新登录的客户端"""
+        sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
+        if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
+            user = address[0] + ':' + address[1]  # 直接使用IP和端口号
+        elif user in self.chatting_rooms:  # 如果用户名已经存在
+            user = user + ':' + address[1]  # 用户名和端口号
+        user = user[:20].strip()  # 如果用户名过长，则截断并去除首尾空格
+        for client in self.user_connections.values():
+            if client.getUserName() == user:  # 如果重名，则添加数字（端口不会重复）
+                user += address[1]
+            # 将用户名加入连接列表
 
-            online_users = self.getOnlineUsers()  # 获取在线用户
-            time.sleep(0.0005)  # 等待一下，否则可能会出现粘包
-            for sending_sock in self.user_connections.values():  # 开始发送用户列表
-                sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
+        # User类的实例化参数：conn, address, permission, passwd, id_num
+        self.user_connections[user] = \
+            User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
+
+        online_users = self.getOnlineUsers()  # 获取在线用户
+        time.sleep(0.2)  # 等待一下，否则可能会出现粘包
+        for sending_sock in self.user_connections.values():  # 开始发送用户列表
+            sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
 
     def getOnlineUsers(self) -> list:
         """
