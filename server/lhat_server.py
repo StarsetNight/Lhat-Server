@@ -103,7 +103,7 @@ class User:
         if permission == 'User':
             self.__permission = 'User'
             self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
-        if root_password == passwd:
+        elif root_password == passwd:
             self.__permission = permission
             self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
         else:
@@ -378,14 +378,17 @@ class Server:
                     sock.send(pack(f'最高管理员登录密码错误。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'manager':
-                operate_user = ''.join(command[2:])
+                operate_user = ' '.join(command[2:])
                 if self.user_connections[recv_data[1]].getPermission() == 'Admin':
                     if command[1] == 'add':
                         self.log(f'{recv_data[1]} wants to add {operate_user} to the Manager group.')
                         if operate_user in self.user_connections and \
                                 self.user_connections[operate_user].getPermission() == 'User':
-                            self.user_connections[operate_user].setPermission('Manager')
+                            self.user_connections[operate_user].setPermission('Manager', root_password)
                             self.log(f'{operate_user} permission changed to Manager.')
+                            self.user_connections[operate_user].getSocket().send(
+                                pack(f'你已被最高管理员添加为维护者。', 'Server', None, 'TEXT_MESSAGE')
+                            )
                             sock.send(pack(f'{operate_user} 已获得维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
                         else:
                             sock.send(pack(f'{operate_user} 不存在或拥有更高权限，无法获得维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
@@ -395,6 +398,9 @@ class Server:
                                 self.user_connections[operate_user].getPermission() == 'Manager':
                             self.user_connections[operate_user].setPermission('User')
                             self.log(f'{operate_user} permission changed to User.')
+                            self.user_connections[operate_user].getSocket().send(
+                                pack(f'你已被最高管理员撤掉维护者。', 'Server', None, 'TEXT_MESSAGE')
+                            )
                             sock.send(pack(f'{operate_user} 已撤掉维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
                         else:
                             sock.send(pack(f'{operate_user} 不存在或拥有其他权限，无法撤掉维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
@@ -411,7 +417,7 @@ class Server:
 
             elif command[0] == 'kick':
                 self.log(f'{recv_data[1]} wants to kick {" ".join(command[1:])}.')
-                if self.user_connections[recv_data[1]].getPermission() == 'Admin':
+                if self.user_connections[recv_data[1]].getPermission() != 'User':
                     if " ".join(command[1:]) in self.user_connections and \
                             self.user_connections[" ".join(command[1:])].getPermission() == 'User':
                         self.user_connections[" ".join(command[1:])].getSocket().send(pack(
