@@ -102,10 +102,8 @@ class User:
         """
         if permission == 'User':
             self.__permission = 'User'
-            self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
         elif root_password == passwd:
             self.__permission = permission
-            self._socket.send(pack(f'权限更改为{permission}', default_room, self._username, 'Server'))
         else:
             print('Incorrect password!')
 
@@ -169,6 +167,10 @@ class Server:
         """
         初始化服务器
         """
+        if not os.path.exists('records'):
+            os.mkdir('records')
+        if not os.path.exists('logs'):
+            os.mkdir('logs')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
@@ -521,7 +523,7 @@ class Server:
         else:
             print(content, end=end)
         if logable:
-            with open('lhat_server.log', 'a') as f:
+            with open(f'logs/lhat_server{time.strftime("%Y-%m-%d", time.localtime())}.log', 'a') as f:
                 f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
 
     @staticmethod
@@ -533,7 +535,7 @@ class Server:
         """
         print(message)
         if recordable:
-            with open('lhat_chatting_record.txt', 'a') as f:
+            with open('records/lhat_chatting_record.txt', 'a') as f:
                 if isinstance(message, str):
                     f.write(message + '\n')
                 elif isinstance(message, bytes):
