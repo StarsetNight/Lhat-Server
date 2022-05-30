@@ -232,7 +232,7 @@ class Server:
         if mask & selectors.EVENT_READ:  # 如果可读，则开始从客户端读取消息
             try:
                 data.inbytes = sock.recv(1024)  # 从客户端读取消息
-            except ConnectionResetError:  # 如果读取失败，则说明客户端已断开连接
+            except ConnectionError:  # 如果读取失败，则说明客户端已断开连接
                 self.closeConnection(sock, data.address)
                 return
             if data.inbytes:  # 如果消息列表不为空
@@ -271,11 +271,10 @@ class Server:
         :return: 无返回值
         """
         if not message:  # 客户端发送了空消息，于是直接断连
-            self.log(f'Connection closed: {address[0]}:{address[1]}')
-            self.select.unregister(sock)  # 从IO多路复用中移除连接
-            sock.close()  # 关闭连接
+            self.closeConnection(sock, address)
             return
         recv_data = unpack(message)  # 解码消息
+        time.sleep(0.0005)  # 延迟，防止粘包
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'COLOR_MESSAGE':  # 如果能正常解析，则进行处理
             if recv_data[1] == default_room:  # 默认聊天室的群聊
                 self.record(message)
@@ -298,6 +297,7 @@ class Server:
 
         elif recv_data[0] == 'COMMAND':
             command = recv_data[2].split(' ')  # 分割命令
+            time.sleep(0.001)
             if command[0] == 'room':
                 room_name = ' '.join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
                 if command[1] == 'create':
@@ -442,6 +442,13 @@ class Server:
                 else:
                     self.log(f'{recv_data[1]} do not have the permission to kick {" ".join(command[1:])}.')
                     sock.send(pack(f'你没有权限踢出 {" ".join(command[1:])}，先看看自己有没有这个权限再说吧。', 'Server', None, 'TEXT_MESSAGE'))
+
+            elif command[0] == 'update':
+                self.log(f'{recv_data[1]} wants to update his user manifest manually.')
+                sock.send(pack(json.dumps(self.getOnlineUsers()), 'Server', default_room, 'USER_MANIFEST'))
+                time.sleep(0.0005)
+                sock.send(pack('你已成功更新用户列表。', 'Server', None, 'TEXT_MESSAGE'))
+
         elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.values():
                 sending_sock.getSocket().send(message)
@@ -451,15 +458,16 @@ class Server:
 
     def processNewLogin(self, sock, address, user):
         """处理新登录的客户端"""
+        new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
         if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
-            user = address[0] + ':' + address[1]  # 直接使用IP和端口号
+            user = address[0] + ':' + new_port  # 直接使用IP和端口号
         elif user in self.chatting_rooms:  # 如果用户名已经存在
-            user = user + ':' + address[1]  # 用户名和端口号
+            user += new_port  # 用户名和端口号
         user = user[:20].strip()  # 如果用户名过长，则截断并去除首尾空格
         for client in self.user_connections.values():
             if client.getUserName() == user:  # 如果重名，则添加数字（端口不会重复）
-                user += address[1]
+                user += new_port
             # 将用户名加入连接列表
 
         # User类的实例化参数：conn, address, permission, passwd, id_num
