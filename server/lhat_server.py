@@ -6,6 +6,7 @@ import sys
 import json
 import types
 import threading
+import sqlite3
 
 from server_operations import *
 import settings  # 导入配置文件
@@ -18,6 +19,14 @@ password = settings.password
 root_password = settings.root_password
 logable = settings.log
 recordable = settings.record
+
+# SQL命令，用于便捷地操作数据库
+create_table = settings.create_table
+append_user = settings.append_user
+delete_user = settings.delete_user
+get_user_info = settings.get_user_info
+reset_user_password = settings.reset_user_password
+set_permission = settings.set_permission
 
 
 class FileClient:
@@ -171,6 +180,8 @@ class Server:
             os.mkdir('records')
         if not os.path.exists('logs'):
             os.mkdir('logs')
+        if not os.path.exists('sql'):
+            os.mkdir('sql')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
@@ -182,6 +193,15 @@ class Server:
         self.main_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.log('Done!', show_time=False)
         self.log('Now the server can be ran.')
+
+        self.sql_connection = sqlite3.connect('sql/server.db')
+        self.log('SQLite3 database connected.')
+        self.sql_cursor = self.sql_connection.cursor()
+        self.log('SQLite3 cursor created.')
+        self.sql_cursor.execute(create_table)
+        self.sql_connection.commit()
+        self.log('USER table exists now.')
+
 
     def run(self):
         """
@@ -456,8 +476,24 @@ class Server:
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             threading.Thread(target=self.processNewLogin, args=(sock, address, recv_data[1])).start()
 
-    def processNewLogin(self, sock, address, user):
+    def processNewLogin(self, sock, address, user_info):
         """处理新登录的客户端"""
+        try:
+            user, passwd = user_info.split('\r\n')
+        except ValueError:
+            user = user_info.strip()
+            passwd = None
+        if passwd:
+            if user in self.user_connections:
+                self.log(f'{user} tried to login again.')
+                sock.send(pack(f'请不要重复登录。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
+            self.sql_cursor.execute('select * from users where user="?"', (user,))
+            if not self.sql_cursor.fetchone():
+                self.log(f'{user} tried to login with wrong password.')
+                sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
+
         new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
         if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
