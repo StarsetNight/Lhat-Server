@@ -194,14 +194,13 @@ class Server:
         self.log('Done!', show_time=False)
         self.log('Now the server can be ran.')
 
-        self.sql_connection = sqlite3.connect('sql/server.db')
+        self.sql_connection = sqlite3.connect('sql/server.db', check_same_thread=False)
         self.log('SQLite3 database connected.')
         self.sql_cursor = self.sql_connection.cursor()
         self.log('SQLite3 cursor created.')
         self.sql_cursor.execute(create_table)
         self.sql_connection.commit()
         self.log('USER table exists now.')
-
 
     def run(self):
         """
@@ -488,7 +487,12 @@ class Server:
                 self.log(f'{user} tried to login again.')
                 sock.send(pack(f'请不要重复登录。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
-            self.sql_cursor.execute('select * from users where user="?"', (user,))
+            try:
+                self.sql_cursor.execute('select * from users where user="?"', (user,))
+            except sqlite3.OperationalError:
+                self.log(f'{user} tried to login with wrong password.')
+                sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
             if not self.sql_cursor.fetchone():
                 self.log(f'{user} tried to login with wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
