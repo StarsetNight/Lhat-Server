@@ -10,6 +10,7 @@ root_password = '12345678'  # 服务器的管理员密码，用于管理员权�
 
 log = True  # 是否记录日志
 record = True  # 是否记录聊天记录
+force_account = True  # 是否强制用户系统，为True时，游客无法加入聊天室
 
 # SQL COMMANDS
 
@@ -19,7 +20,7 @@ PASSWORD CHAR(32) NOT NULL,
 PERMISSION VARCHAR(8) NOT NULL
 );'''
 
-append_user = 'INSERT INTO USERS(USER_NAME, PASSWORD, PERMISSION) VALUES(?, ?, ?)'
+append_user = 'INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION) VALUES(?, ?, ?)'
 
 delete_user = 'DELETE FROM USERS WHERE USER_NAME = ?'
 

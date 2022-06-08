@@ -19,6 +19,7 @@ password = settings.password
 root_password = settings.root_password
 logable = settings.log
 recordable = settings.record
+force_account = settings.force_account
 
 # SQL命令，用于便捷地操作数据库
 create_table = settings.create_table
@@ -186,6 +187,7 @@ class Server:
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
         self.chatting_rooms = [default_room]  # 创建一个聊天室列表
+        self.sql_exist_user = []  # 数据库中的用户
         self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
         self.log('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
@@ -200,7 +202,18 @@ class Server:
         self.log('SQLite3 cursor created.')
         self.sql_cursor.execute(create_table)
         self.sql_connection.commit()
-        self.log('USER table exists now.')
+        self.log('USERS table exists now.')
+        self.sql_cursor.execute('SELECT USER_NAME FROM USERS')
+        for name in self.sql_cursor:
+            self.sql_exist_user.append(name[0])
+        if 'root' not in self.sql_exist_user:
+            self.sql_cursor.execute(append_user, ('root', '25d55ad283aa400af464c76d713c07ad', 'Admin'))
+            self.sql_exist_user.append('root')
+            self.log('Root account not found, created.')
+        else:
+            self.sql_cursor.execute(set_permission, ('Admin', 'root'))
+        self.sql_connection.commit()
+
 
     def run(self):
         """
@@ -212,7 +225,10 @@ class Server:
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
         self.log('================================')
         self.log(f'Running server on {ip}:{port}')
-        self.log('  To change the ip address, \n  please visit settings.py')
+        self.log('  To change the settings, \n  please visit settings.py')
+        if force_account:
+            self.log('Warning, force account is enabled!!! \n'
+                     '  Guest won\'t be able to login.')
         self.log('Waiting for connection...')
         self.main_sock.setblocking(False)  # 设置为非阻塞
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
@@ -316,6 +332,7 @@ class Server:
 
         elif recv_data[0] == 'COMMAND':
             command = recv_data[2].split(' ')  # 分割命令
+            command.append('')
             time.sleep(0.001)
             if command[0] == 'room':
                 room_name = ' '.join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
@@ -385,7 +402,6 @@ class Server:
 
             elif command[0] == 'root':
                 self.log(f'{recv_data[1]} wants to change his permission.')
-                command.append('')
                 if command[1] == root_password:
                     self.user_connections[recv_data[1]].setPermission('Admin', command[1])
                     self.log(f'{recv_data[1]} permission changed to Admin.')
@@ -487,16 +503,25 @@ class Server:
                 self.log(f'{user} tried to login again.')
                 sock.send(pack(f'请不要重复登录。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
+                return
             try:
-                self.sql_cursor.execute('select * from users where user="?"', (user,))
-            except sqlite3.OperationalError:
-                self.log(f'{user} tried to login with wrong password.')
+                self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME=? AND PASSWORD=?', (user, passwd))
+            except sqlite3.OperationalError as err:
+                print(err)
+                self.log(f'{user} tried to login with a wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
+                return
             if not self.sql_cursor.fetchone():
-                self.log(f'{user} tried to login with wrong password.')
+                self.log(f'{user} tried to login with a wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
+                return
+        elif force_account:
+            self.log(f'{user} tried to login without password.')
+            sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
 
         new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
