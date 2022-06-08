@@ -506,28 +506,41 @@ class Server:
                 return
             try:
                 self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME=? AND PASSWORD=?', (user, passwd))
-            except sqlite3.OperationalError as err:
-                print(err)
+            except sqlite3.OperationalError:
                 self.log(f'{user} tried to login with a wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
                 return
-            if not self.sql_cursor.fetchone():
+            else:
+                # 暂时保存查询信息
+                query_result = self.sql_cursor.fetchone()
+
+            if not query_result:
                 self.log(f'{user} tried to login with a wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
                 self.closeConnection(sock, address)
                 return
+            else:
+                logged_user = True
         elif force_account:
             self.log(f'{user} tried to login without password.')
             sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', None, 'TEXT_MESSAGE'))
             self.closeConnection(sock, address)
             return
+        elif user in self.sql_exist_user:
+            self.log(f'{user} is already in the database.')
+            sock.send(pack(f'该用户名已存在。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
+        else:
+            logged_user = False
+            query_result = None
 
         new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
         if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
             user = address[0] + ':' + new_port  # 直接使用IP和端口号
-        elif user in self.chatting_rooms:  # 如果用户名已经存在
+        while user in self.chatting_rooms:  # 如果用户名已经存在
             user += new_port  # 用户名和端口号
         user = user[:20].strip()  # 如果用户名过长，则截断并去除首尾空格
         for client in self.user_connections.values():
@@ -535,9 +548,14 @@ class Server:
                 user += new_port
             # 将用户名加入连接列表
 
-        # User类的实例化参数：conn, address, permission, passwd, id_num
-        self.user_connections[user] = \
-            User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
+        # User类的实例化参数：conn, address, permission, passwd, id_num, name
+        if logged_user and query_result:
+            # 用数据库的信息初始化User类
+            self.user_connections[user] = \
+                User(sock, address, query_result[2], '123456', self.client_id, user)
+        else:
+            self.user_connections[user] = \
+                User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
 
         online_users = self.getOnlineUsers()  # 获取在线用户
         time.sleep(0.2)  # 等待一下，否则可能会出现粘包
