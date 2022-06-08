@@ -402,7 +402,10 @@ class Server:
 
             elif command[0] == 'root':
                 self.log(f'{recv_data[1]} wants to change his permission.')
-                if command[1] == root_password:
+                if recv_data[1] == 'root':
+                    self.log(f'{recv_data[1]} is database\'s root, abort changing.')
+                    sock.send(pack(f'你是数据库的保留管理员，不能更改权限。', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == root_password:
                     self.user_connections[recv_data[1]].setPermission('Admin', command[1])
                     self.log(f'{recv_data[1]} permission changed to Admin.')
                     sock.send(pack(f'你已获得最高管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
@@ -415,6 +418,8 @@ class Server:
                     sock.send(pack(f'最高管理员登录密码错误。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'manager':
+                # command添加空格
+                command.append('')
                 operate_user = ' '.join(command[2:])
                 if self.user_connections[recv_data[1]].getPermission() == 'Admin':
                     if command[1] == 'add':
@@ -453,6 +458,7 @@ class Server:
                         sock.send(pack(f'你没有最高权限以用于管理用户。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'kick':
+                command.append('')
                 self.log(f'{recv_data[1]} wants to kick {" ".join(command[1:])}.')
                 if self.user_connections[recv_data[1]].getPermission() != 'User':
                     if " ".join(command[1:]) in self.user_connections and \
@@ -472,7 +478,7 @@ class Server:
                                                                    'Server', None, 'TEXT_MESSAGE'))
                         else:
                             self.log(f'{" ".join(command[1:])} does not exist, abort kicking.')
-                            sock.send(pack(f'{" ".join(command[1:])} 不存在或为管理员，无法踢出。<br/>'
+                            sock.send(pack(f'{" ".join(command[1:])} 不存在或为管理员，无法踢出。'
                                            f'也许你该先把对方的管理员撤了？', 'Server', None, 'TEXT_MESSAGE'))
                 else:
                     self.log(f'{recv_data[1]} do not have the permission to kick {" ".join(command[1:])}.')
@@ -529,6 +535,11 @@ class Server:
             return
         elif user in self.sql_exist_user:
             self.log(f'{user} is already in the database.')
+            sock.send(pack(f'该用户名已存在。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
+        elif user == 'Server':
+            self.log(f'{user} tried to login as Server.')
             sock.send(pack(f'该用户名已存在。', 'Server', None, 'TEXT_MESSAGE'))
             self.closeConnection(sock, address)
             return
