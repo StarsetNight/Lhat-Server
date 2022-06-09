@@ -6,6 +6,7 @@ import sys
 import json
 import types
 import threading
+import sqlite3
 
 from server_operations import *
 import settings  # 导入配置文件
@@ -18,6 +19,15 @@ password = settings.password
 root_password = settings.root_password
 logable = settings.log
 recordable = settings.record
+force_account = settings.force_account
+
+# SQL命令，用于便捷地操作数据库
+create_table = settings.create_table
+append_user = settings.append_user
+delete_user = settings.delete_user
+get_user_info = settings.get_user_info
+reset_user_password = settings.reset_user_password
+set_permission = settings.set_permission
 
 
 class FileClient:
@@ -171,10 +181,13 @@ class Server:
             os.mkdir('records')
         if not os.path.exists('logs'):
             os.mkdir('logs')
+        if not os.path.exists('sql'):
+            os.mkdir('sql')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
         self.chatting_rooms = [default_room]  # 创建一个聊天室列表
+        self.sql_exist_user = []  # 数据库中的用户
         self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
         self.log('Initializing server... ', end='')
         self.select = selectors.DefaultSelector()  # 创建IO多路复用
@@ -182,6 +195,25 @@ class Server:
         self.main_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.log('Done!', show_time=False)
         self.log('Now the server can be ran.')
+
+        self.sql_connection = sqlite3.connect('sql/server.db', check_same_thread=False)
+        self.log('SQLite3 database connected.')
+        self.sql_cursor = self.sql_connection.cursor()
+        self.log('SQLite3 cursor created.')
+        self.sql_cursor.execute(create_table)
+        self.sql_connection.commit()
+        self.log('USERS table exists now.')
+        self.sql_cursor.execute('SELECT USER_NAME FROM USERS')
+        for name in self.sql_cursor:
+            self.sql_exist_user.append(name[0])
+        if 'root' not in self.sql_exist_user:
+            self.sql_cursor.execute(append_user, ('root', '25d55ad283aa400af464c76d713c07ad', 'Admin'))
+            self.sql_exist_user.append('root')
+            self.log('Root account not found, created.')
+        else:
+            self.sql_cursor.execute(set_permission, ('Admin', 'root'))
+        self.sql_connection.commit()
+
 
     def run(self):
         """
@@ -193,7 +225,10 @@ class Server:
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
         self.log('================================')
         self.log(f'Running server on {ip}:{port}')
-        self.log('  To change the ip address, \n  please visit settings.py')
+        self.log('  To change the settings, \n  please visit settings.py')
+        if force_account:
+            self.log('Warning, force account is enabled!!! \n'
+                     '  Guest won\'t be able to login.')
         self.log('Waiting for connection...')
         self.main_sock.setblocking(False)  # 设置为非阻塞
         self.select.register(self.main_sock, selectors.EVENT_READ, data=None)  # 注册socket到IO多路复用，以便于多连接
@@ -232,7 +267,7 @@ class Server:
         if mask & selectors.EVENT_READ:  # 如果可读，则开始从客户端读取消息
             try:
                 data.inbytes = sock.recv(1024)  # 从客户端读取消息
-            except ConnectionResetError:  # 如果读取失败，则说明客户端已断开连接
+            except ConnectionError:  # 如果读取失败，则说明客户端已断开连接
                 self.closeConnection(sock, data.address)
                 return
             if data.inbytes:  # 如果消息列表不为空
@@ -271,11 +306,10 @@ class Server:
         :return: 无返回值
         """
         if not message:  # 客户端发送了空消息，于是直接断连
-            self.log(f'Connection closed: {address[0]}:{address[1]}')
-            self.select.unregister(sock)  # 从IO多路复用中移除连接
-            sock.close()  # 关闭连接
+            self.closeConnection(sock, address)
             return
         recv_data = unpack(message)  # 解码消息
+        time.sleep(0.0005)  # 延迟，防止粘包
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'COLOR_MESSAGE':  # 如果能正常解析，则进行处理
             if recv_data[1] == default_room:  # 默认聊天室的群聊
                 self.record(message)
@@ -298,6 +332,8 @@ class Server:
 
         elif recv_data[0] == 'COMMAND':
             command = recv_data[2].split(' ')  # 分割命令
+            command.append('')
+            time.sleep(0.001)
             if command[0] == 'room':
                 room_name = ' '.join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
                 if command[1] == 'create':
@@ -366,8 +402,10 @@ class Server:
 
             elif command[0] == 'root':
                 self.log(f'{recv_data[1]} wants to change his permission.')
-                command.append('')
-                if command[1] == root_password:
+                if recv_data[1] == 'root':
+                    self.log(f'{recv_data[1]} is database\'s root, abort changing.')
+                    sock.send(pack(f'你是数据库的保留管理员，不能更改权限。', 'Server', None, 'TEXT_MESSAGE'))
+                elif command[1] == root_password:
                     self.user_connections[recv_data[1]].setPermission('Admin', command[1])
                     self.log(f'{recv_data[1]} permission changed to Admin.')
                     sock.send(pack(f'你已获得最高管理员权限。', 'Server', None, 'TEXT_MESSAGE'))
@@ -380,6 +418,8 @@ class Server:
                     sock.send(pack(f'最高管理员登录密码错误。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'manager':
+                # command添加空格
+                command.append('')
                 operate_user = ' '.join(command[2:])
                 if self.user_connections[recv_data[1]].getPermission() == 'Admin':
                     if command[1] == 'add':
@@ -418,6 +458,7 @@ class Server:
                         sock.send(pack(f'你没有最高权限以用于管理用户。', 'Server', None, 'TEXT_MESSAGE'))
 
             elif command[0] == 'kick':
+                command.append('')
                 self.log(f'{recv_data[1]} wants to kick {" ".join(command[1:])}.')
                 if self.user_connections[recv_data[1]].getPermission() != 'User':
                     if " ".join(command[1:]) in self.user_connections and \
@@ -437,11 +478,18 @@ class Server:
                                                                    'Server', None, 'TEXT_MESSAGE'))
                         else:
                             self.log(f'{" ".join(command[1:])} does not exist, abort kicking.')
-                            sock.send(pack(f'{" ".join(command[1:])} 不存在或为管理员，无法踢出。<br/>'
+                            sock.send(pack(f'{" ".join(command[1:])} 不存在或为管理员，无法踢出。'
                                            f'也许你该先把对方的管理员撤了？', 'Server', None, 'TEXT_MESSAGE'))
                 else:
                     self.log(f'{recv_data[1]} do not have the permission to kick {" ".join(command[1:])}.')
                     sock.send(pack(f'你没有权限踢出 {" ".join(command[1:])}，先看看自己有没有这个权限再说吧。', 'Server', None, 'TEXT_MESSAGE'))
+
+            elif command[0] == 'update':
+                self.log(f'{recv_data[1]} wants to update his user manifest manually.')
+                sock.send(pack(json.dumps(self.getOnlineUsers()), 'Server', default_room, 'USER_MANIFEST'))
+                time.sleep(0.0005)
+                sock.send(pack('你已成功更新用户列表。', 'Server', None, 'TEXT_MESSAGE'))
+
         elif recv_data[0] == 'DO_NOT_PROCESS':
             for sending_sock in self.user_connections.values():
                 sending_sock.getSocket().send(message)
@@ -449,22 +497,76 @@ class Server:
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             threading.Thread(target=self.processNewLogin, args=(sock, address, recv_data[1])).start()
 
-    def processNewLogin(self, sock, address, user):
+    def processNewLogin(self, sock, address, user_info):
         """处理新登录的客户端"""
+        try:
+            user, passwd = user_info.split('\r\n')
+        except ValueError:
+            user = user_info.strip()
+            passwd = None
+        if passwd:
+            if user in self.user_connections:
+                self.log(f'{user} tried to login again.')
+                sock.send(pack(f'请不要重复登录。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
+                return
+            try:
+                self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME=? AND PASSWORD=?', (user, passwd))
+            except sqlite3.OperationalError:
+                self.log(f'{user} tried to login with a wrong password.')
+                sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
+                return
+            else:
+                # 暂时保存查询信息
+                query_result = self.sql_cursor.fetchone()
+
+            if not query_result:
+                self.log(f'{user} tried to login with a wrong password.')
+                sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
+                self.closeConnection(sock, address)
+                return
+            else:
+                logged_user = True
+        elif force_account:
+            self.log(f'{user} tried to login without password.')
+            sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
+        elif user in self.sql_exist_user:
+            self.log(f'{user} is already in the database.')
+            sock.send(pack(f'该用户名已存在。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
+        elif user == 'Server':
+            self.log(f'{user} tried to login as Server.')
+            sock.send(pack(f'该用户名已存在。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
+        else:
+            logged_user = False
+            query_result = None
+
+        new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
         if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
-            user = address[0] + ':' + address[1]  # 直接使用IP和端口号
-        elif user in self.chatting_rooms:  # 如果用户名已经存在
-            user = user + ':' + address[1]  # 用户名和端口号
+            user = address[0] + ':' + new_port  # 直接使用IP和端口号
+        while user in self.chatting_rooms:  # 如果用户名已经存在
+            user += new_port  # 用户名和端口号
         user = user[:20].strip()  # 如果用户名过长，则截断并去除首尾空格
         for client in self.user_connections.values():
             if client.getUserName() == user:  # 如果重名，则添加数字（端口不会重复）
-                user += address[1]
+                user += new_port
             # 将用户名加入连接列表
 
-        # User类的实例化参数：conn, address, permission, passwd, id_num
-        self.user_connections[user] = \
-            User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
+        # User类的实例化参数：conn, address, permission, passwd, id_num, name
+        if logged_user and query_result:
+            # 用数据库的信息初始化User类
+            self.user_connections[user] = \
+                User(sock, address, query_result[2], '123456', self.client_id, user)
+        else:
+            self.user_connections[user] = \
+                User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
 
         online_users = self.getOnlineUsers()  # 获取在线用户
         time.sleep(0.2)  # 等待一下，否则可能会出现粘包
