@@ -49,8 +49,9 @@ def unpack(json_message: str):
 
     if 'to' not in message or 'by' not in message or 'message' not in message:
         return None,
-    if message['type'] == 'TEXT_MESSAGE':  # 如果是纯文本消息
-        return 'TEXT_MESSAGE', message['to'], message['by'], message['time']
+    if message['type'] == 'TEXT_MESSAGE' or \
+            message['type'] == 'COLOR_MESSAGE':  # 如果是纯文本消息
+        return message['type'], message['to'], message['by'], message['time']
     elif message['type'] == 'USER_NAME':  # 如果是用户名称
         try:
             username = message['message']
