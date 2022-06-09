@@ -15,10 +15,9 @@ def pack(raw_message, send_from, chat_with, message_type, file_name=None):
         'by': send_from,
         'to': chat_with,
         'type': message_type,
-        'time': time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(time.time())),
+        'time': time.time(),
         'message': raw_message,
         'file': file_name,
-        'end': 'JSON_MESSAGE_END'
     }  # 先把收集到的信息存储到字典里
     return json.dumps(message).encode('utf-8')  # 再用json打包
 
@@ -45,13 +44,12 @@ def unpack(json_message: str):
         if isinstance(message, list):
             message = message[0]
             message = json.loads(message)
-
-        if message['end'] != 'JSON_MESSAGE_END':
-            return None,
     except json.decoder.JSONDecodeError:
         return 'DO_NOT_PROCESS',
 
-    if message['type'] == 'TEXT_MESSAGE_ARTICLE':  # 如果是纯文本消息
+    if 'to' not in message or 'by' not in message or 'message' not in message:
+        return None,
+    if message['type'] == 'TEXT_MESSAGE':  # 如果是纯文本消息
         return 'TEXT_MESSAGE', message['to'], message['by'], message['time']
     elif message['type'] == 'USER_NAME':  # 如果是用户名称
         try:
@@ -59,5 +57,7 @@ def unpack(json_message: str):
             return message['type'], username
         except json.decoder.JSONDecodeError:
             return 'MANIFEST_NOT_JSON',
+    elif message['type'] == 'COMMAND':
+        return message['type'], message['by'], message['message']
     else:
         return 'UNKNOWN_MESSAGE_TYPE',
