@@ -208,7 +208,7 @@ class Server:
         for name in self.sql_cursor:
             self.sql_exist_user.append(name[0])
         if 'root' not in self.sql_exist_user:
-            self.sql_cursor.execute(append_user, ('root', '25d55ad283aa400af464c76d713c07ad', 'Admin'))
+            self.sql_cursor.execute(append_user, ('root', '25d55ad283aa400af464c76d713c07ad', 'Admin', 0))
             self.sql_exist_user.append('root')
             self.log('Root account not found, created.')
         else:
@@ -480,11 +480,11 @@ class Server:
                             if command[2] not in self.sql_exist_user and \
                                     command[2] not in self.user_connections and \
                                     command[2] != 'Server':
-                                self.sql_cursor.execute('INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION) '
-                                                        'VALUES (?, ?, ?)',
+                                self.sql_cursor.execute('INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION, BAN) '
+                                                        'VALUES (?, ?, ?, ?)',
                                                         (command[2],
                                                          hashlib.md5((" ".join(command[4:])).encode()).hexdigest(),
-                                                         command[3]))
+                                                         command[3], 0))
                                 self.sql_connection.commit()
                                 self.sql_exist_user.append(command[2])
                                 self.log(f'{command[2]} created, permission: {command[3]}.')
@@ -493,8 +493,9 @@ class Server:
                                 self.log(f'{command[2]} already exists.')
                                 sock.send(pack(f'{command[2]} 已存在于数据库或为保留字，无法创建。',
                                                'Server', None, 'TEXT_MESSAGE'))
+
                         elif command[1] == 'setpwd':
-                            self.log(f'{recv_data[1]} wants to set password of {command[3]}.')
+                            self.log(f'{recv_data[1]} wants to set password of {command[2]}.')
                             if command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute('UPDATE USERS SET PASSWORD = ? WHERE USER_NAME = ?',
                                                         (hashlib.md5((" ".join(command[3:])).encode()).hexdigest(),
@@ -507,23 +508,38 @@ class Server:
                             else:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法更改密码。', 'Server', None, 'TEXT_MESSAGE'))
+
                         elif command[1] == 'setper':
                             self.log(f'{recv_data[1]} wants to set permission of {command[2]}.')
-                            if command[2] in self.sql_exist_user:
+                            if command[2] == 'root':
+                                self.log(f'{recv_data[1]} tried to set permission of root.')
+                                sock.send(pack(f'你不能更改 root 的权限。', 'Server', None, 'TEXT_MESSAGE'))
+                            elif command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute('UPDATE USERS SET PERMISSION = ? WHERE USER_NAME = ?',
                                                         (command[3], command[2]))
                                 self.sql_connection.commit()
                                 if command[2] in self.user_connections:
-                                    self.user_connections[command[2]].setPermission(command[3])
+                                    self.user_connections[command[2]].setPermission(command[3], '12345678')
+                                    self.user_connections[command[2]].getSocket().send(pack(
+                                        f'你的权限已被更改为 {command[3]}。', 'Server', None, 'TEXT_MESSAGE'))
                                 sock.send(pack(f'已成功更改 {command[2]} 的权限为 {command[3]}。', 'Server', None, 'TEXT_MESSAGE'))
                             else:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法更改权限。', 'Server', None, 'TEXT_MESSAGE'))
+
                         elif command[1] == 'delete':
                             self.log(f'{recv_data[1]} wants to delete {command[2]}.')
-                            if command[2] == 'root':
+                            # 查看数据库中要删除的用户的权限
+                            self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
+                            permission = self.sql_cursor.fetchone()[0]
+                            if recv_data[1] == command[2] or command[2] == 'root':
+                                self.log(f'{recv_data[1]} tried to ban himself.')
+                                sock.send(pack(f'你不能把自己给删除了！也不能删除root！',
+                                               'Server', None, 'TEXT_MESSAGE'))
+                            elif permission == 'Admin' and recv_data[1] != 'root':
                                 self.log(f'{command[2]} cannot be deleted.')
-                                sock.send(pack(f'{command[2]} 是最高管理员，不能删除。', 'Server', None, 'TEXT_MESSAGE'))
+                                sock.send(pack(f'{command[2]} 是最高管理员，而且你不是root用户，不能删除。',
+                                               'Server', None, 'TEXT_MESSAGE'))
                             elif command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute('DELETE FROM USERS WHERE USER_NAME = ?', (command[2],))
                                 self.sql_connection.commit()
@@ -537,9 +553,61 @@ class Server:
                             else:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法删除。', 'Server', None, 'TEXT_MESSAGE'))
+
+                        elif command[1] == 'ban':
+                            self.log(f'{recv_data[1]} wants to ban {command[2]}')
+                            self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
+                            permission = self.sql_cursor.fetchone()[0]
+                            if recv_data[1] == command[2] or command[2] == 'root':
+                                self.log(f'{recv_data[1]} tried to ban himself.')
+                                sock.send(pack(f'你不能把自己给封禁了！也不能封禁root！',
+                                               'Server', None, 'TEXT_MESSAGE'))
+                            elif permission == 'Admin' and recv_data[1] != 'root':
+                                self.log(f'{command[2]} cannot be deleted.')
+                                sock.send(pack(f'{command[2]} 是最高管理员，而且你不是root用户，不能封禁该用户。',
+                                               'Server', None, 'TEXT_MESSAGE'))
+                            elif command[2] in self.sql_exist_user:
+                                self.sql_cursor.execute('UPDATE USERS SET BAN = ? WHERE USER_NAME = ?', (1, command[2]))
+                                self.sql_connection.commit()
+                                if command[2] in self.user_connections:
+                                    self.user_connections[command[2]].getSocket().send(pack(
+                                        f'你已被管理员踢出服务器。', 'Server', None, 'TEXT_MESSAGE'))
+                                    self.closeConnection(self.user_connections[command[2]].getSocket(),
+                                                         self.user_connections[command[2]].getAddress())
+                                sock.send(pack(f'已成功封禁 {command[2]}。', 'Server', None, 'TEXT_MESSAGE'))
+                            else:
+                                self.log(f'{command[2]} does not exist.')
+                                sock.send(pack(f'{command[2]} 不存在，无法封禁。', 'Server', None, 'TEXT_MESSAGE'))
+
+                        elif command[1] == 'restore':
+                            self.log(f'{recv_data[1]} wants to restore {command[2]}')
+                            if command[2] in self.sql_exist_user:
+                                self.sql_cursor.execute('UPDATE USERS SET BAN = ? WHERE USER_NAME = ?', (0, command[2]))
+                                self.sql_connection.commit()
+                                self.sql_exist_user.append(command[2])
+                                sock.send(pack(f'已成功解除封禁 {command[2]}。', 'Server', None, 'TEXT_MESSAGE'))
+                            else:
+                                self.log(f'{command[2]} does not exist.')
+                                sock.send(pack(f'{command[2]} 不存在，无法解除封禁。', 'Server', None, 'TEXT_MESSAGE'))
+
                         else:
                             self.log(f'{command[1]} is not a valid operation.')
                             sock.send(pack(f'{command[1]} 不是一个有效的操作。', 'Server', None, 'TEXT_MESSAGE'))
+
+                elif command[0] == 'resetpwd':
+                    self.log(f'{recv_data[1]} wants to reset password.')
+                    if not command[1]:
+                        self.log(f'{recv_data[1]} tried to reset password without a password.')
+                        sock.send(pack(f'你没有输入新密码。', 'Server', None, 'TEXT_MESSAGE'))
+                    elif recv_data[1] in self.sql_exist_user:
+                        self.sql_cursor.execute('UPDATE USERS SET PASSWORD = ? WHERE USER_NAME = ?',
+                                                (hashlib.md5((" ".join(command[1:])).encode()).hexdigest(),
+                                                 recv_data[1]))
+                        self.sql_connection.commit()
+                        sock.send(pack(f'你已成功重置密码为 {" ".join(command[1:])}', 'Server', None, 'TEXT_MESSAGE'))
+                    else:
+                        self.log(f'{recv_data[1]} does not exist.')
+                        sock.send(pack(f'{recv_data[1]} 不存在，无法重置密码。', 'Server', None, 'TEXT_MESSAGE'))
 
             except IndexError:
                 self.log(f'There is something wrong with {recv_data[1]}\'s command.')
@@ -566,7 +634,7 @@ class Server:
                 self.closeConnection(sock, address)
                 return
             try:
-                self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME=? AND PASSWORD=?', (user, passwd))
+                self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME = ? AND PASSWORD = ?', (user, passwd))
             except sqlite3.OperationalError:
                 self.log(f'{user} tried to login with a wrong password.')
                 sock.send(pack(f'用户名或密码错误。', 'Server', None, 'TEXT_MESSAGE'))
@@ -601,6 +669,12 @@ class Server:
         else:
             logged_user = False
             query_result = None
+
+        if query_result[3]:
+            self.log(f'{user} is banned.')
+            sock.send(pack(f'你已被管理员封禁。', 'Server', None, 'TEXT_MESSAGE'))
+            self.closeConnection(sock, address)
+            return
 
         new_port = str(address[1])
         sock.send(pack(default_room, None, None, 'DEFAULT_ROOM'))  # 发送默认群聊
