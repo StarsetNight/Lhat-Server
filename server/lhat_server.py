@@ -620,6 +620,45 @@ class Server:
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             threading.Thread(target=self.processNewLogin, args=(sock, address, recv_data[1])).start()
 
+        elif recv_data[0] == 'REGISTER':
+            self.log(f'New register information received.')
+            try:
+                user, passwd = recv_data[1].split('\r\n')
+            except ValueError:
+                self.log('This is not a valid register information.')
+                sock.send(bytes('failed', 'utf-8'))
+                self.closeConnection(sock, address)
+                return
+            if passwd:
+                if user in self.user_connections:
+                    self.log(f'{user} tried to register again.')
+                    sock.send(bytes('failed', 'utf-8'))
+                    self.closeConnection(sock, address)
+                    return
+            else:
+                self.log(f'{user} tried to register without password.')
+                sock.send(bytes('failed', 'utf-8'))
+                self.closeConnection(sock, address)
+                return
+            if user in self.sql_exist_user:
+                self.log(f'{user} is already in the database.')
+                sock.send(bytes('failed', 'utf-8'))
+                self.closeConnection(sock, address)
+                return
+            elif user == 'Server':
+                self.log(f'{user} tried to register as Server.')
+                sock.send(bytes('failed', 'utf-8'))
+                self.closeConnection(sock, address)
+                return
+            else:
+                self.sql_cursor.execute('INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION, BAN) VALUES (?, ?, ?, ?)',
+                                        (user, passwd, 'User', 0))
+                self.sql_connection.commit()
+                self.sql_exist_user.append(user)
+                self.log(f'{user} has been registered.')
+                sock.send(bytes('successful', 'utf-8'))
+                self.closeConnection(sock, address)
+
     def processNewLogin(self, sock, address, user_info):
         """处理新登录的客户端"""
         try:
@@ -668,7 +707,7 @@ class Server:
             return
         else:
             logged_user = False
-            query_result = None
+            query_result = (None for _ in range(6))
 
         if query_result[3]:
             self.log(f'{user} is banned.')
