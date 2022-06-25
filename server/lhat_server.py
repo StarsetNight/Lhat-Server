@@ -44,7 +44,7 @@ class FileClient:
         :param file_name: 文件名
         :param file_size: 文件大小
         """
-        self.connection = conn
+        self._connection = conn
         self.address = address
         self.file_id = file_id
         self.file_name = file_name
@@ -56,29 +56,36 @@ class FileClient:
         开始接收文件。
         """
         if os.path.exists(self.file_path):
-            self.connection.send(bytes('FILE_EXIST', 'utf-8'))
-            self.connection.close()
+            self._connection.send(bytes('exists', 'utf-8'))
+            self._connection.close()
         else:
-            self.connection.send(bytes('RECEIVING', 'utf-8'))
             with open(self.file_path, 'wb') as f:
-                while True:
-                    data = self.connection.recv(1024)
-                    if data == b'':
-                        break
+                try:
+                    data = self._connection.recv(1024)
+                except ConnectionResetError:
+                    print(f'File Client {self.address} disconnected.')
+                    data = b''
+                while data:
                     f.write(data)
-            self.connection.close()
+                    try:
+                        data = self._connection.recv(1024)
+                    except ConnectionResetError:
+                        print(f'File Client {self.address} disconnected.')
+                        break
+            self._connection.send(bytes('successful', 'utf-8'))
+            self._connection.close()
             file_list[self.file_id] = self.file_path
 
     def startSend(self, recv_id, file_list):
         if recv_id in file_list:
-            self.connection.send(bytes('SENDING', 'utf-8'))
             with open(file_list[recv_id], 'rb') as f:
-                while True:
-                    data = f.read(1024)
+                data = f.read(1024)
+                while data:
                     if data == b'':
                         break
-                    self.connection.send(data)
-            self.connection.close()
+                    self._connection.send(data)
+                    data = f.read(1024)
+            self._connection.close()
 
 
 class User:
@@ -184,6 +191,8 @@ class Server:
             os.mkdir('logs')
         if not os.path.exists('sql'):
             os.mkdir('sql')
+        if not os.path.exists('files'):
+            os.mkdir('files')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
@@ -330,6 +339,10 @@ class Server:
                             sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
                         sending_sock.getSocket().send(message)  # 发送给该用户
+
+        elif recv_data[0] == 'SEND_FILE':
+            print(f'File sending request received: {recv_data[1]}')
+
 
         elif recv_data[0] == 'COMMAND':
             command = recv_data[2].split(' ')  # 分割命令
