@@ -13,14 +13,14 @@ from server_operations import *
 import settings  # 导入配置文件
 
 
-ip = settings.ip_address
-port = settings.network_port
-default_room = settings.default_chatting_room
+ip = settings.ip_address  # 服务器IP地址
+port = settings.network_port  # 服务器端口
+default_room = settings.default_chatting_room  # 默认聊天室名称
 password = settings.password
-root_password = settings.root_password
-logable = settings.log
-recordable = settings.record
-force_account = settings.force_account
+root_password = settings.root_password  # 无实际用途，只是走个流程
+logable = settings.log  # 是否记录日志
+recordable = settings.record  # 是否记录聊天记录
+force_account = settings.force_account  # 是否强制用户系统，为True时，游客无法加入聊天室
 
 # SQL命令，用于便捷地操作数据库
 create_table = settings.create_table
@@ -44,7 +44,7 @@ class FileClient:
         :param file_name: 文件名
         :param file_size: 文件大小
         """
-        self.connection = conn
+        self._connection = conn
         self.address = address
         self.file_id = file_id
         self.file_name = file_name
@@ -56,29 +56,36 @@ class FileClient:
         开始接收文件。
         """
         if os.path.exists(self.file_path):
-            self.connection.send(bytes('FILE_EXIST', 'utf-8'))
-            self.connection.close()
+            self._connection.send(bytes('exists', 'utf-8'))
+            self._connection.close()
         else:
-            self.connection.send(bytes('RECEIVING', 'utf-8'))
             with open(self.file_path, 'wb') as f:
-                while True:
-                    data = self.connection.recv(1024)
-                    if data == b'':
-                        break
+                try:
+                    data = self._connection.recv(1024)
+                except ConnectionResetError:
+                    print(f'File Client {self.address} disconnected.')
+                    data = b''
+                while data:
                     f.write(data)
-            self.connection.close()
+                    try:
+                        data = self._connection.recv(1024)
+                    except ConnectionResetError:
+                        print(f'File Client {self.address} disconnected.')
+                        break
+            self._connection.send(bytes('successful', 'utf-8'))
+            self._connection.close()
             file_list[self.file_id] = self.file_path
 
     def startSend(self, recv_id, file_list):
         if recv_id in file_list:
-            self.connection.send(bytes('SENDING', 'utf-8'))
             with open(file_list[recv_id], 'rb') as f:
-                while True:
-                    data = f.read(1024)
+                data = f.read(1024)
+                while data:
                     if data == b'':
                         break
-                    self.connection.send(data)
-            self.connection.close()
+                    self._connection.send(data)
+                    data = f.read(1024)
+            self._connection.close()
 
 
 class User:
@@ -184,6 +191,8 @@ class Server:
             os.mkdir('logs')
         if not os.path.exists('sql'):
             os.mkdir('sql')
+        if not os.path.exists('files'):
+            os.mkdir('files')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
@@ -197,24 +206,23 @@ class Server:
         self.log('Done!', show_time=False)
         self.log('Now the server can be ran.')
 
-        self.sql_connection = sqlite3.connect('sql/server.db', check_same_thread=False)
+        self.sql_connection = sqlite3.connect('sql/server.db', check_same_thread=False)  # 创建数据库连接
         self.log('SQLite3 database connected.')
-        self.sql_cursor = self.sql_connection.cursor()
+        self.sql_cursor = self.sql_connection.cursor()  # 创建数据库游标
         self.log('SQLite3 cursor created.')
-        self.sql_cursor.execute(create_table)
+        self.sql_cursor.execute(create_table)  # 创建数据库表，名为USERS
         self.sql_connection.commit()
         self.log('USERS table exists now.')
-        self.sql_cursor.execute('SELECT USER_NAME FROM USERS')
+        self.sql_cursor.execute('SELECT USER_NAME FROM USERS')  # 获取数据库中的用户名
         for name in self.sql_cursor:
-            self.sql_exist_user.append(name[0])
-        if 'root' not in self.sql_exist_user:
+            self.sql_exist_user.append(name[0])  # 将用户名添加到列表中
+        if 'root' not in self.sql_exist_user:  # 如果数据库中没有root用户，则创建
             self.sql_cursor.execute(append_user, ('root', '25d55ad283aa400af464c76d713c07ad', 'Admin', 0))
             self.sql_exist_user.append('root')
             self.log('Root account not found, created.')
-        else:
+        else:  # 如果数据库中有root用户，则检查权限是否正确
             self.sql_cursor.execute(set_permission, ('Admin', 'root'))
         self.sql_connection.commit()
-
 
     def run(self):
         """
@@ -331,19 +339,24 @@ class Server:
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
                         sending_sock.getSocket().send(message)  # 发送给该用户
 
+        elif recv_data[0] == 'SEND_FILE':
+            print(f'File sending request received: {recv_data[1]}')
+            # 待办：发送及接收文件
+
         elif recv_data[0] == 'COMMAND':
+            # 客户端会发送命令，于是服务器应该根据命令进行相应的处理
             command = recv_data[2].split(' ')  # 分割命令
             time.sleep(0.001)
             try:
                 if command[0] == 'room':
                     room_name = ' '.join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
-                    if command[1] == 'create':
+                    if command[1] == 'create':  # 创建聊天室，需要Manager以上权限
                         self.log(f'{recv_data[1]} wants to create room {room_name}')
                         if self.user_connections[recv_data[1]].getPermission() != 'User':  # 如果不是普通用户
                             if room_name in self.chatting_rooms or room_name in self.user_connections:
                                 self.log(f'Room {room_name} already exists, abort creating.')
                                 sock.send(pack(f'{room_name} 已存在，无法创建。', 'Server', None, 'TEXT_MESSAGE'))
-                            else:
+                            else:  # 如果聊天室不存在，则创建聊天室
                                 self.chatting_rooms.append(room_name)
                                 self.log(f'Room {room_name} created.')
                                 for name, user in self.user_connections.items():
@@ -353,7 +366,7 @@ class Server:
                         else:
                             self.log(f'User {recv_data[1]} is not allowed to create room.')
                             sock.send(pack(f'你没有创建聊天室的权限。', 'Server', None, 'TEXT_MESSAGE'))
-                    elif command[1] == 'join':
+                    elif command[1] == 'join':  # 加入聊天室
                         self.log(f'{recv_data[1]} join room {room_name}')
                         if room_name in self.chatting_rooms:
                             for name, user in self.user_connections.items():
@@ -363,12 +376,12 @@ class Server:
                         else:
                             self.log(f'Room {room_name} does not exist, abort joining.')
                             sock.send(pack(f'{room_name} 不存在，无法加入。', 'Server', None, 'TEXT_MESSAGE'))
-                    elif command[1] == 'list':
+                    elif command[1] == 'list':  # 列出所有聊天室
                         self.log(f'{recv_data[1]} wants to check online rooms.')
                         sock.send(pack(f'当前聊天室有：{self.chatting_rooms}\n'
                                        f'你已加入的聊天室有：{self.user_connections[recv_data[1]].getRooms()}',
                                        'Server', None, 'TEXT_MESSAGE'))
-                    elif command[1] == 'leave':
+                    elif command[1] == 'leave':  # 离开聊天室
                         self.log(f'{recv_data[1]} wants to leave room {room_name}')
                         if room_name in self.chatting_rooms:
                             for name, user in self.user_connections.items():
@@ -378,7 +391,7 @@ class Server:
                         else:
                             self.log(f'Room {room_name} does not exist, abort leaving.')
                             sock.send(pack(f'{room_name} 不存在，无法退出。', 'Server', None, 'TEXT_MESSAGE'))
-                    elif command[1] == 'delete':
+                    elif command[1] == 'delete':  # 删除聊天室，需要Manager以上权限
                         self.log(f'{recv_data[1]} wants to delete room {room_name}')
                         if self.user_connections[recv_data[1]].getPermission() == 'Admin':
                             if room_name in self.chatting_rooms:
@@ -401,7 +414,7 @@ class Server:
                     sock.send(pack(json.dumps(self.user_connections[recv_data[1]].getRooms()),
                                    'Server', None, 'ROOM_MANIFEST'))
 
-                elif command[0] == 'manager':
+                elif command[0] == 'manager':  # 维护者任免命令
                     # command添加空格
                     operate_user = command[2]
                     if self.user_connections[recv_data[1]].getPermission() == 'Admin':
@@ -417,8 +430,8 @@ class Server:
                                 sock.send(pack(f'{operate_user} 已获得维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
                             else:
                                 sock.send(pack(f'{operate_user} 不存在或拥有更高权限，无法获得维护者权限。', 'Server', None, 'TEXT_MESSAGE'))
-                        elif command[1] == 'remove':
-                            self.log(f'{recv_data[1]} wants to remove {operate_user} from the Manager group.')
+                        elif command[1] == 'delete':
+                            self.log(f'{recv_data[1]} wants to delete {operate_user} from the Manager group.')
                             if operate_user in self.user_connections and \
                                     self.user_connections[operate_user].getPermission() == 'Manager':
                                 self.user_connections[operate_user].setPermission('User')
@@ -466,16 +479,16 @@ class Server:
                         self.log(f'{recv_data[1]} do not have the permission to kick {command[1]}.')
                         sock.send(pack(f'你没有权限踢出 {command[1]}，先看看自己有没有这个权限再说吧。', 'Server', None, 'TEXT_MESSAGE'))
 
-                elif command[0] == 'update':
+                elif command[0] == 'update':  # 有的用户可能无法及时更新用户列表，所以可以手动更新
                     self.log(f'{recv_data[1]} wants to update his user manifest manually.')
                     sock.send(pack(json.dumps(self.getOnlineUsers()), 'Server', default_room, 'USER_MANIFEST'))
                     time.sleep(0.0005)
                     sock.send(pack('你已成功更新用户列表。', 'Server', None, 'TEXT_MESSAGE'))
 
-                elif command[0] == 'user':
+                elif command[0] == 'user':  # 用户系统相关命令
                     self.log(f'{recv_data[1]} wants to operate the SQL database.')
                     if self.user_connections[recv_data[1]].getPermission() == 'Admin':
-                        if command[1] == 'create':
+                        if command[1] == 'create':  # 创建用户
                             self.log(f'{recv_data[1]} wants to create {command[2]}.')
                             if command[2] not in self.sql_exist_user and \
                                     command[2] not in self.user_connections and \
@@ -494,7 +507,7 @@ class Server:
                                 sock.send(pack(f'{command[2]} 已存在于数据库或为保留字，无法创建。',
                                                'Server', None, 'TEXT_MESSAGE'))
 
-                        elif command[1] == 'setpwd':
+                        elif command[1] == 'setpwd':  # 设置密码
                             self.log(f'{recv_data[1]} wants to set password of {command[2]}.')
                             if command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute('UPDATE USERS SET PASSWORD = ? WHERE USER_NAME = ?',
@@ -509,7 +522,7 @@ class Server:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法更改密码。', 'Server', None, 'TEXT_MESSAGE'))
 
-                        elif command[1] == 'setper':
+                        elif command[1] == 'setper':  # 设置权限
                             self.log(f'{recv_data[1]} wants to set permission of {command[2]}.')
                             if command[2] == 'root':
                                 self.log(f'{recv_data[1]} tried to set permission of root.')
@@ -527,7 +540,7 @@ class Server:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法更改权限。', 'Server', None, 'TEXT_MESSAGE'))
 
-                        elif command[1] == 'delete':
+                        elif command[1] == 'delete':  # 删除用户
                             self.log(f'{recv_data[1]} wants to delete {command[2]}.')
                             # 查看数据库中要删除的用户的权限
                             self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
@@ -554,7 +567,7 @@ class Server:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法删除。', 'Server', None, 'TEXT_MESSAGE'))
 
-                        elif command[1] == 'ban':
+                        elif command[1] == 'ban':  # 封禁用户
                             self.log(f'{recv_data[1]} wants to ban {command[2]}')
                             self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
                             permission = self.sql_cursor.fetchone()[0]
@@ -579,7 +592,7 @@ class Server:
                                 self.log(f'{command[2]} does not exist.')
                                 sock.send(pack(f'{command[2]} 不存在，无法封禁。', 'Server', None, 'TEXT_MESSAGE'))
 
-                        elif command[1] == 'restore':
+                        elif command[1] == 'restore':  # 解封用户
                             self.log(f'{recv_data[1]} wants to restore {command[2]}')
                             if command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute('UPDATE USERS SET BAN = ? WHERE USER_NAME = ?', (0, command[2]))
@@ -594,7 +607,7 @@ class Server:
                             self.log(f'{command[1]} is not a valid operation.')
                             sock.send(pack(f'{command[1]} 不是一个有效的操作。', 'Server', None, 'TEXT_MESSAGE'))
 
-                elif command[0] == 'resetpwd':
+                elif command[0] == 'resetpwd':  # 自助重置密码
                     self.log(f'{recv_data[1]} wants to reset password.')
                     if not command[1]:
                         self.log(f'{recv_data[1]} tried to reset password without a password.')
@@ -613,17 +626,56 @@ class Server:
                 self.log(f'There is something wrong with {recv_data[1]}\'s command.')
                 sock.send(pack(f'你的命令格式有误，请检查后重试。', 'Server', None, 'TEXT_MESSAGE'))
 
-        elif recv_data[0] == 'DO_NOT_PROCESS':
+        elif recv_data[0] == 'DO_NOT_PROCESS':  # 如果收到的是一个无效的消息，则先尝试直接发送
             for sending_sock in self.user_connections.values():
                 sending_sock.getSocket().send(message)
 
         elif recv_data[0] == 'USER_NAME':  # 如果是用户名
             threading.Thread(target=self.processNewLogin, args=(sock, address, recv_data[1])).start()
 
+        elif recv_data[0] == 'REGISTER':  # 用户系统注册信息
+            self.log(f'New register information received.')
+            try:
+                user, passwd = recv_data[1].split('\r\n')
+            except ValueError:
+                self.log('This is not a valid register information.')
+                sock.send(bytes('failed', 'utf-8'))
+                self.closeConnection(sock, address)
+                return
+            if passwd:
+                if user in self.user_connections:
+                    self.log(f'{user} tried to register again.')
+                    sock.send(bytes('failed', 'utf-8'))  # 注册信息无法重复
+                    self.closeConnection(sock, address)
+                    return
+            else:
+                self.log(f'{user} tried to register without password.')
+                sock.send(bytes('failed', 'utf-8'))  # 如果没有密码，则返回失败
+                self.closeConnection(sock, address)
+                return
+            if user in self.sql_exist_user:
+                self.log(f'{user} is already in the database.')
+                sock.send(bytes('failed', 'utf-8'))  # 如果用户已存在，则返回失败
+                self.closeConnection(sock, address)
+                return
+            elif user == 'Server':
+                self.log(f'{user} tried to register as Server.')
+                sock.send(bytes('failed', 'utf-8'))  # 不允许注册为Server
+                self.closeConnection(sock, address)
+                return
+            else:
+                self.sql_cursor.execute('INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION, BAN) VALUES (?, ?, ?, ?)',
+                                        (user, passwd, 'User', 0))
+                self.sql_connection.commit()
+                self.sql_exist_user.append(user)
+                self.log(f'{user} has been registered.')
+                sock.send(bytes('successful', 'utf-8'))  # 注册成功
+                self.closeConnection(sock, address)
+
     def processNewLogin(self, sock, address, user_info):
         """处理新登录的客户端"""
         try:
-            user, passwd = user_info.split('\r\n')
+            user, passwd = user_info.split('\r\n')  # 分割用户名和密码
         except ValueError:
             user = user_info.strip()
             passwd = None
@@ -668,7 +720,7 @@ class Server:
             return
         else:
             logged_user = False
-            query_result = None
+            query_result = (None for _ in range(6))
 
         if query_result[3]:
             self.log(f'{user} is banned.')
@@ -701,6 +753,7 @@ class Server:
         time.sleep(0.2)  # 等待一下，否则可能会出现粘包
         for sending_sock in self.user_connections.values():  # 开始发送用户列表
             sending_sock.getSocket().send(pack(json.dumps(online_users), None, default_room, 'USER_MANIFEST'))
+        return
 
     def getOnlineUsers(self) -> list:
         """
