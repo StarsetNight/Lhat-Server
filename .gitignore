@@ -135,5 +135,4 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
-sqls/*.db
-records/*.txt
+lhat_chatting_record.txt
