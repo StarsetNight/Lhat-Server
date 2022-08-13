@@ -2,7 +2,7 @@ import json
 import time
 
 
-def pack(raw_message, send_from, chat_with, message_type, file_name=None):
+def pack(raw_message, send_from, chat_with, message_type):
     """
     打包消息，用于发送
     :param raw_message: 正文消息
@@ -17,9 +17,8 @@ def pack(raw_message, send_from, chat_with, message_type, file_name=None):
         'type': message_type,
         'time': time.time(),
         'message': raw_message,
-        'file': file_name,
     }  # 先把收集到的信息存储到字典里
-    return json.dumps(message).encode('utf-8')  # 再用json打包
+    return (json.dumps(message) + '\0').encode('utf-8')  # 再用json打包
 
 
 def unpack(json_message: str):
