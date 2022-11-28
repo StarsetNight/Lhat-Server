@@ -10,15 +10,11 @@ from server_operations import *
 from defines import settings
 from defines.User import User
 
-
 ip = settings.ip_address  # 服务器IP地址
 port = settings.network_port  # 服务器端口
 default_room = settings.default_room  # 默认聊天室名称
 password = settings.password
 root_password = settings.root_password  # 无实际用途，只是走个流程
-logable = settings.log  # 是否记录日志
-recordable = settings.record  # 是否记录聊天记录
-force_account = settings.force_account  # 是否强制用户系统，为True时，游客无法加入聊天室
 
 # SQL命令，用于便捷地操作数据库
 create_table = settings.create_table
@@ -33,6 +29,12 @@ class Server:
     """
     服务器类，用于接收客户端的请求，并调用相应的操作
     """
+    VERSION: str = settings.VERSION  # Lhat Server版本
+    logable: bool  # 是否记录日志
+    recordable: bool  # 是否记录聊天记录
+    force_account: bool  # 是否强制用户系统，为True时，游客无法加入聊天室
+    allow_register: bool  # 是否允许注册新用户，Manager权限以上可以在运行后更改
+
     def __init__(self):
         """
         初始化服务器
@@ -45,6 +47,12 @@ class Server:
             os.mkdir('sql')
         if not os.path.exists('files'):
             os.mkdir('files')
+        print(f'Lhat Chatting Server Version {self.VERSION} using AGPL v3.0 License')
+        self.logable = settings.log
+        self.recordable = settings.record
+        self.force_account = settings.force_account
+        self.allow_register = settings.allow_register
+        self.log('Server arguments set.')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
@@ -84,10 +92,10 @@ class Server:
         # main_sock是用于监听的socket，用于接收客户端的连接
         self.main_sock.bind((ip, port))
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
-        self.log('================================')
+        self.log('================================', show_time=False)
         self.log(f'Running server on {ip}:{port}')
         self.log('  To change the settings, \n  please visit settings.py')
-        if force_account:
+        if self.force_account:
             self.log('Warning, force account is enabled!!! \n'
                      '  Guest will not be able to login.')
         self.log('Waiting for connection...')
@@ -133,7 +141,6 @@ class Server:
                 return
             if data.inbytes:  # 如果消息列表不为空
                 try:
-                    data.inbytes = data.inbytes.split(b'\n')[0]
                     data.inbytes = data.inbytes.strip(b'\x00\xcc\0')  # 尝试解码
                 except UnicodeDecodeError:
                     self.log('A message is not in utf-8 encoding.')
@@ -478,6 +485,26 @@ class Server:
                             self.log(f'{command[1]} is not a valid operation.')
                             sock.send(pack(f'{command[1]} is not a valid operation.', 'Server', '', 'TEXT_MESSAGE'))
 
+                elif command[0] == 'option':  # 服务器管理设置
+                    if command[1] == 'show':
+                        self.log(f'{recv_data[1]} checked the server options.')
+                        sock.send(pack(f'Server Management Settings\nlogable: {self.logable}\nrecordable: {self.recordable}\n'
+                                       f'forceAccount: {self.force_account}\nallowRegister: {self.allow_register}',
+                                       'Server', '', 'TEXT_MESSAGE'))
+                    elif command[1] == 'set':
+                        self.log(f'{recv_data[1]} tried to set {command[2]} to {command[3]}')
+                        if command[2] == 'logable':
+                            self.logable = (command[3] == 'true')
+                        elif command[2] == 'recordable':
+                            self.recordable = (command[3] == 'true')
+                        elif command[2] == 'forceAccount':
+                            self.force_account = (command[3] == 'true')
+                        elif command[2] == 'allowRegister':
+                            self.allow_register = (command[3] == 'true')
+                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}',
+                                       'Server', '', 'TEXT_MESSAGE'))
+
+
                 elif command[0] == 'resetpwd':  # 自助重置密码
                     self.log(f'{recv_data[1]} wants to reset password.')
                     if not command[1]:
@@ -510,6 +537,9 @@ class Server:
 
         elif recv_data[0] == 'REGISTER':  # 用户系统注册信息
             self.log(f'New register information received.')
+            if not self.allow_register:  # 如果禁止注册新用户
+                sock.send(bytes('failed\0', 'utf-8'))
+                return
             try:
                 user, passwd = recv_data[1].split('\r\n')
             except ValueError:
@@ -578,7 +608,7 @@ class Server:
                 return
             else:
                 logged_user = True
-        elif force_account:
+        elif self.force_account:
             self.log(f'{user} tried to login without password.')
             sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', '', 'TEXT_MESSAGE'))
             self.closeConnection(sock, address)
@@ -669,8 +699,7 @@ class Server:
             sending_sock.getSocket().send(pack(json.dumps(online_users), '', default_room, 'USER_MANIFEST'))
         sock.close()
 
-    @staticmethod
-    def log(content: str, end='\n', show_time=True):
+    def log(self, content: str, end='\n', show_time=True):
         """
         日志
         :param content: 日志内容
@@ -682,19 +711,18 @@ class Server:
             print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}', end=end)
         else:
             print(content, end=end)
-        if logable:
+        if self.logable:
             with open(f'logs/lhat_server{time.strftime("%Y-%m-%d", time.localtime())}.log', 'a') as f:
                 f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
 
-    @staticmethod
-    def record(message):
+    def record(self, message):
         """
         记录聊天消息
         :param message: 记录内容
         :return: 无返回值
         """
         print(message)
-        if recordable:
+        if self.recordable:
             with open('records/lhat_chatting_record.txt', 'a') as f:
                 if isinstance(message, str):
                     f.write(message + '\n')
