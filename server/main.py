@@ -96,7 +96,7 @@ class Server:
         while True:
             events = self.select.select(timeout=None)  # 阻塞等待IO事件
             for key, mask in events:  # 事件循环，key用于获取连接，mask用于获取事件类型
-                if key.data is '':  # 如果是新连接
+                if key.data == '':  # 如果是新连接
                     self.createConnection(key.fileobj)  # 接收连接
                 else:  # 如果是已连接
                     self.serveClient(key, mask)  # 处理连接
@@ -133,6 +133,7 @@ class Server:
                 return
             if data.inbytes:  # 如果消息列表不为空
                 try:
+                    data.inbytes = data.inbytes.split(b'\n')[0]
                     data.inbytes = data.inbytes.strip(b'\x00\xcc\0')  # 尝试解码
                 except UnicodeDecodeError:
                     self.log('A message is not in utf-8 encoding.')
@@ -179,13 +180,13 @@ class Server:
             # 这里可能有点疑惑，默认聊天室明明也在chatting_rooms里，这里不会出问题吗？
             # 回答是，不会的。因为只要第一个if条件过不去，那么这就不是默认聊天室了，而是其他聊天室或私聊
             elif recv_data[1] in self.chatting_rooms:  # 如果是其他聊天室的群聊
-                print(f'Other room message received: {recv_data[3]}')
+                print(f'Other rooms message received: {recv_data[3]}')
                 for sending_sock in self.user_connections.values():
                     if recv_data[1] in sending_sock.getRooms():  # 如果该用户在该聊天室
                         sending_sock.getSocket().send(message)
-            else:
+            else:  # 私聊
                 print(f'Private message received [{recv_data[3]}]')
-                for sending_sock in self.user_connections.values():  # 私聊
+                for sending_sock in self.user_connections.values():
                     if sending_sock.getUserName() == recv_data[1] or \
                             sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
@@ -193,7 +194,7 @@ class Server:
 
         elif recv_data[0] == 'SEND_FILE':
             print(f'File sending request received: {recv_data[1]}')
-            # 待办：发送及接收文件
+            # 待办: 发送及接收文件
 
         elif recv_data[0] == 'COMMAND':
             # 客户端会发送命令，于是服务器应该根据命令进行相应的处理
@@ -231,8 +232,8 @@ class Server:
                             sock.send(pack(f'{room_name} 不存在，无法加入。', 'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'list':  # 列出所有聊天室
                         self.log(f'{recv_data[1]} wants to check online rooms.')
-                        sock.send(pack(f'Now online rooms：{self.chatting_rooms}\n'
-                                       f'You joined：{self.user_connections[recv_data[1]].getRooms()}',
+                        sock.send(pack(f'Now online rooms: {self.chatting_rooms}\n'
+                                       f'You joined: {self.user_connections[recv_data[1]].getRooms()}',
                                        'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'leave':  # 离开聊天室
                         self.log(f'{recv_data[1]} wants to leave room {room_name}')
@@ -326,7 +327,7 @@ class Server:
                                 self.log(f'{recv_data[1]} tried to kick himself.')
                                 sock.send(pack(f'You cannot kick yourself!!!', 'Server', '', 'TEXT_MESSAGE'))
                                 for sending_sock in self.user_connections.values():  # 直接发送
-                                    sending_sock.getSocket().send(pack(f'[新闻] 人类迷惑行为：{recv_data[1]} 试图把自己踢出服务器。',
+                                    sending_sock.getSocket().send(pack(f'[新闻] 人类迷惑行为: {recv_data[1]} 试图把自己踢出服务器。',
                                                                        'Server', '', 'TEXT_MESSAGE'))
                             else:
                                 self.log(f'{command[1]} does not exist, abort kicking.')
@@ -434,7 +435,13 @@ class Server:
                         elif command[1] == 'ban':  # 封禁用户
                             self.log(f'{recv_data[1]} wants to ban {command[2]}')
                             self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
-                            permission = self.sql_cursor.fetchone()[0]
+                            permission = self.sql_cursor.fetchone()
+                            if permission:
+                                permission = permission[0]
+                            else:
+                                self.log(f'{command[2]} does not exist.')
+                                sock.send(pack(f'{command[2]} does not exist', 'Server', '', 'TEXT_MESSAGE'))
+                                return
                             if recv_data[1] == command[2] or command[2] == 'root':
                                 self.log(f'{recv_data[1]} tried to ban himself.')
                                 sock.send(pack(f'You cannot ban yourself or root.',
@@ -608,7 +615,7 @@ class Server:
                 user += new_port
             # 将用户名加入连接列表
 
-        # User类的实例化参数：conn, address, permission, passwd, id_num, name
+        # User类的实例化参数: conn, address, permission, passwd, id_num, name
         if logged_user and query_result:
             # 用数据库的信息初始化User类
             self.user_connections[user] = \
@@ -621,6 +628,7 @@ class Server:
         time.sleep(0.2)  # 等待一下，否则可能会出现粘包
         for sending_sock in self.user_connections.values():  # 开始发送用户列表
             sending_sock.getSocket().send(pack(json.dumps(online_users), '', default_room, 'USER_MANIFEST'))
+        self.log(f"{user} logged in.")
         return
 
     def getOnlineUsers(self) -> list:

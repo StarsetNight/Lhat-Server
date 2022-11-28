@@ -1,4 +1,4 @@
-from server.defines.settings import password, default_room, root_password
+from defines.settings import password, default_room, root_password
 
 
 class User:
