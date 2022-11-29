@@ -1,4 +1,5 @@
-from server.defines.settings import password, default_room, root_password
+from defines.settings import default_room
+import socket
 
 
 class User:
@@ -6,7 +7,7 @@ class User:
     用户类，用于存储每个连接到本服务器的客户端的信息。
     """
 
-    def __init__(self, conn, address, permission, passwd, id_num, name):
+    def __init__(self, conn, address, permission, id_num, name):
         """
         初始化客户端
         """
@@ -15,11 +16,7 @@ class User:
         self._username = name  # 客户端的用户名
         self._rooms = [default_room]  # 客户端所在的房间
         self.__id_num = id_num  # 客户端的id号
-        if password == passwd:
-            self.__permission = permission
-        else:
-            print('Incorrect password!')
-            self.__permission = 'User'
+        self.__permission = permission
 
     def getPermission(self) -> str:
         """
@@ -27,16 +24,11 @@ class User:
         """
         return self.__permission
 
-    def setPermission(self, permission='User', passwd=''):
+    def setPermission(self, permission='User'):
         """
         设置客户端的权限
         """
-        if permission == 'User':
-            self.__permission = 'User'
-        elif root_password == passwd:
-            self.__permission = permission
-        else:
-            print('Incorrect password!')
+        self.__permission = permission
 
     def getId(self) -> int:
         """
@@ -44,7 +36,7 @@ class User:
         """
         return self.__id_num
 
-    def getSocket(self):
+    def getSocket(self) -> socket.socket:
         """
         获取客户端的socket
         """

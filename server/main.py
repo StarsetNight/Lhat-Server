@@ -10,16 +10,6 @@ from server_operations import *
 from defines import settings
 from defines.User import User
 
-
-ip = settings.ip_address  # 服务器IP地址
-port = settings.network_port  # 服务器端口
-default_room = settings.default_room  # 默认聊天室名称
-password = settings.password
-root_password = settings.root_password  # 无实际用途，只是走个流程
-logable = settings.log  # 是否记录日志
-recordable = settings.record  # 是否记录聊天记录
-force_account = settings.force_account  # 是否强制用户系统，为True时，游客无法加入聊天室
-
 # SQL命令，用于便捷地操作数据库
 create_table = settings.create_table
 append_user = settings.append_user
@@ -33,6 +23,18 @@ class Server:
     """
     服务器类，用于接收客户端的请求，并调用相应的操作
     """
+    # INFORMATION
+    VERSION: str = settings.VERSION  # Lhat Server版本
+    ip: str = settings.ip_address  # 服务器IP地址
+    port: int = settings.network_port  # 服务器端口
+    default_room: str = settings.default_room  # 默认聊天室名称
+
+    # SETTINGS
+    logable: bool  # 是否记录日志
+    recordable: bool  # 是否记录聊天记录
+    force_account: bool  # 是否强制用户系统，为True时，游客无法加入聊天室
+    allow_register: bool  # 是否允许注册新用户，Manager权限以上可以在运行后更改
+
     def __init__(self):
         """
         初始化服务器
@@ -45,10 +47,16 @@ class Server:
             os.mkdir('sql')
         if not os.path.exists('files'):
             os.mkdir('files')
+        print(f'Lhat Chatting Server Version {self.VERSION} using AGPL v3.0 License')
+        self.logable = settings.log
+        self.recordable = settings.record
+        self.force_account = settings.force_account
+        self.allow_register = settings.allow_register
+        self.log('Server arguments set.')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
         self.need_handle_messages = []  # 创建一个空的消息队列
-        self.chatting_rooms = [default_room]  # 创建一个聊天室列表
+        self.chatting_rooms = [self.default_room]  # 创建一个聊天室列表
         self.sql_exist_user = []  # 数据库中的用户
         self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
         self.log('Initializing server... ', end='')
@@ -82,12 +90,12 @@ class Server:
         :return: 无返回值，因为服务器一直运行，直到程序结束
         """
         # main_sock是用于监听的socket，用于接收客户端的连接
-        self.main_sock.bind((ip, port))
+        self.main_sock.bind((self.ip, self.port))
         self.main_sock.listen(20)  # 监听，最多accept 20个连接数
-        self.log('================================')
-        self.log(f'Running server on {ip}:{port}')
+        self.log('================================', show_time=False)
+        self.log(f'Running server on {self.ip}:{self.port}')
         self.log('  To change the settings, \n  please visit settings.py')
-        if force_account:
+        if self.force_account:
             self.log('Warning, force account is enabled!!! \n'
                      '  Guest will not be able to login.')
         self.log('Waiting for connection...')
@@ -96,7 +104,7 @@ class Server:
         while True:
             events = self.select.select(timeout=None)  # 阻塞等待IO事件
             for key, mask in events:  # 事件循环，key用于获取连接，mask用于获取事件类型
-                if key.data is '':  # 如果是新连接
+                if key.data == '':  # 如果是新连接
                     self.createConnection(key.fileobj)  # 接收连接
                 else:  # 如果是已连接
                     self.serveClient(key, mask)  # 处理连接
@@ -172,28 +180,36 @@ class Server:
         recv_data = unpack(message)  # 解码消息
         time.sleep(0.0005)  # 延迟，防止粘包
         if recv_data[0] == 'TEXT_MESSAGE' or recv_data[0] == 'COLOR_MESSAGE':  # 如果能正常解析，则进行处理
-            if recv_data[1] == default_room:  # 默认聊天室的群聊
+            if recv_data[1] == self.default_room:  # 默认聊天室的群聊
                 self.record(message)
                 for sending_sock in self.user_connections.values():  # 直接发送
                     sending_sock.getSocket().send(message)
             # 这里可能有点疑惑，默认聊天室明明也在chatting_rooms里，这里不会出问题吗？
             # 回答是，不会的。因为只要第一个if条件过不去，那么这就不是默认聊天室了，而是其他聊天室或私聊
             elif recv_data[1] in self.chatting_rooms:  # 如果是其他聊天室的群聊
-                print(f'Other room message received: {recv_data[3]}')
+                print(f'Other rooms message received: {recv_data[3]}')
                 for sending_sock in self.user_connections.values():
                     if recv_data[1] in sending_sock.getRooms():  # 如果该用户在该聊天室
                         sending_sock.getSocket().send(message)
-            else:
+            else:  # 私聊
                 print(f'Private message received [{recv_data[3]}]')
-                for sending_sock in self.user_connections.values():  # 私聊
+                """
+                for sending_sock in self.user_connections.values():
                     if sending_sock.getUserName() == recv_data[1] or \
                             sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
                         # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
                         sending_sock.getSocket().send(message)  # 发送给该用户
+                """
+                # 显然遍历没下标好
+                if recv_data[1] in self.user_connections:
+                    sock.send(message)
+                    self.user_connections[recv_data[1]].getSocket().send(message)
+                else:
+                    sock.send(pack("私聊目标用户不存在。", "Server", "", "TEXT_MESSAGE"))
 
         elif recv_data[0] == 'SEND_FILE':
             print(f'File sending request received: {recv_data[1]}')
-            # 待办：发送及接收文件
+            # 待办: 发送及接收文件
 
         elif recv_data[0] == 'COMMAND':
             # 客户端会发送命令，于是服务器应该根据命令进行相应的处理
@@ -231,8 +247,8 @@ class Server:
                             sock.send(pack(f'{room_name} 不存在，无法加入。', 'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'list':  # 列出所有聊天室
                         self.log(f'{recv_data[1]} wants to check online rooms.')
-                        sock.send(pack(f'Now online rooms：{self.chatting_rooms}\n'
-                                       f'You joined：{self.user_connections[recv_data[1]].getRooms()}',
+                        sock.send(pack(f'Now online rooms: {self.chatting_rooms}\n'
+                                       f'You joined: {self.user_connections[recv_data[1]].getRooms()}',
                                        'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'leave':  # 离开聊天室
                         self.log(f'{recv_data[1]} wants to leave room {room_name}')
@@ -275,7 +291,7 @@ class Server:
                             self.log(f'{recv_data[1]} wants to add {operate_user} to the Manager group.')
                             if operate_user in self.user_connections and \
                                     self.user_connections[operate_user].getPermission() == 'User':
-                                self.user_connections[operate_user].setPermission('Manager', root_password)
+                                self.user_connections[operate_user].setPermission('Manager')
                                 self.log(f'{operate_user} permission changed to Manager.')
                                 self.user_connections[operate_user].getSocket().send(
                                     pack(f'你已被最高管理员添加为维护者。', 'Server', '', 'TEXT_MESSAGE')
@@ -326,7 +342,7 @@ class Server:
                                 self.log(f'{recv_data[1]} tried to kick himself.')
                                 sock.send(pack(f'You cannot kick yourself!!!', 'Server', '', 'TEXT_MESSAGE'))
                                 for sending_sock in self.user_connections.values():  # 直接发送
-                                    sending_sock.getSocket().send(pack(f'[新闻] 人类迷惑行为：{recv_data[1]} 试图把自己踢出服务器。',
+                                    sending_sock.getSocket().send(pack(f'[新闻] 人类迷惑行为: {recv_data[1]} 试图把自己踢出服务器。',
                                                                        'Server', '', 'TEXT_MESSAGE'))
                             else:
                                 self.log(f'{command[1]} does not exist, abort kicking.')
@@ -339,7 +355,7 @@ class Server:
 
                 elif command[0] == 'update':  # 有的用户可能无法及时更新用户列表，所以可以手动更新
                     self.log(f'{recv_data[1]} wants to update his user manifest manually.')
-                    sock.send(pack(json.dumps(self.getOnlineUsers()), 'Server', default_room, 'USER_MANIFEST'))
+                    sock.send(pack(json.dumps(self.getOnlineUsers()), 'Server', self.default_room, 'USER_MANIFEST'))
                     time.sleep(0.0005)
                     sock.send(pack('你已成功更新用户列表。', 'Server', '', 'TEXT_MESSAGE'))
 
@@ -391,7 +407,7 @@ class Server:
                                                         (command[3], command[2]))
                                 self.sql_connection.commit()
                                 if command[2] in self.user_connections:
-                                    self.user_connections[command[2]].setPermission(command[3], '12345678')
+                                    self.user_connections[command[2]].setPermission(command[3])
                                     self.user_connections[command[2]].getSocket().send(pack(
                                         f'你的权限已被更改为 {command[3]}。', 'Server', '', 'TEXT_MESSAGE'))
                                 sock.send(pack(f'Successfully changed {command[2]} permission to {command[3]}。',
@@ -434,7 +450,13 @@ class Server:
                         elif command[1] == 'ban':  # 封禁用户
                             self.log(f'{recv_data[1]} wants to ban {command[2]}')
                             self.sql_cursor.execute('SELECT PERMISSION FROM USERS WHERE USER_NAME = ?', (command[2],))
-                            permission = self.sql_cursor.fetchone()[0]
+                            permission = self.sql_cursor.fetchone()
+                            if permission:
+                                permission = permission[0]
+                            else:
+                                self.log(f'{command[2]} does not exist.')
+                                sock.send(pack(f'{command[2]} does not exist', 'Server', '', 'TEXT_MESSAGE'))
+                                return
                             if recv_data[1] == command[2] or command[2] == 'root':
                                 self.log(f'{recv_data[1]} tried to ban himself.')
                                 sock.send(pack(f'You cannot ban yourself or root.',
@@ -471,6 +493,26 @@ class Server:
                             self.log(f'{command[1]} is not a valid operation.')
                             sock.send(pack(f'{command[1]} is not a valid operation.', 'Server', '', 'TEXT_MESSAGE'))
 
+                elif command[0] == 'option':  # 服务器管理设置
+                    if command[1] == 'show':
+                        self.log(f'{recv_data[1]} checked the server options.')
+                        sock.send(pack(f'Server Management Settings\nlogable: {self.logable}\nrecordable: {self.recordable}\n'
+                                       f'forceAccount: {self.force_account}\nallowRegister: {self.allow_register}',
+                                       'Server', '', 'TEXT_MESSAGE'))
+                    elif command[1] == 'set':
+                        self.log(f'{recv_data[1]} tried to set {command[2]} to {command[3]}')
+                        if command[2] == 'logable':
+                            self.logable = (command[3] == 'true')
+                        elif command[2] == 'recordable':
+                            self.recordable = (command[3] == 'true')
+                        elif command[2] == 'forceAccount':
+                            self.force_account = (command[3] == 'true')
+                        elif command[2] == 'allowRegister':
+                            self.allow_register = (command[3] == 'true')
+                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}',
+                                       'Server', '', 'TEXT_MESSAGE'))
+
+
                 elif command[0] == 'resetpwd':  # 自助重置密码
                     self.log(f'{recv_data[1]} wants to reset password.')
                     if not command[1]:
@@ -503,6 +545,9 @@ class Server:
 
         elif recv_data[0] == 'REGISTER':  # 用户系统注册信息
             self.log(f'New register information received.')
+            if not self.allow_register:  # 如果禁止注册新用户
+                sock.send(bytes('failed\0', 'utf-8'))
+                return
             try:
                 user, passwd = recv_data[1].split('\r\n')
             except ValueError:
@@ -571,7 +616,7 @@ class Server:
                 return
             else:
                 logged_user = True
-        elif force_account:
+        elif self.force_account:
             self.log(f'{user} tried to login without password.')
             sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', '', 'TEXT_MESSAGE'))
             self.closeConnection(sock, address)
@@ -597,7 +642,7 @@ class Server:
             return
 
         new_port = str(address[1])
-        sock.send(pack(default_room, '', '', 'DEFAULT_ROOM'))  # 发送默认群聊
+        sock.send(pack(self.default_room, '', '', 'DEFAULT_ROOM'))  # 发送默认群聊
         if user == '用户名不存在' or not user:  # 如果客户端未设定用户名
             user = address[0] + ':' + new_port  # 直接使用IP和端口号
         while user in self.chatting_rooms:  # 如果用户名已经存在
@@ -608,19 +653,20 @@ class Server:
                 user += new_port
             # 将用户名加入连接列表
 
-        # User类的实例化参数：conn, address, permission, passwd, id_num, name
+        # User类的实例化参数: conn, address, permission, passwd, id_num, name
         if logged_user and query_result:
             # 用数据库的信息初始化User类
             self.user_connections[user] = \
-                User(sock, address, query_result[2], '123456', self.client_id, user)
+                User(sock, address, query_result[2], self.client_id, user)
         else:
             self.user_connections[user] = \
-                User(sock, address, 'User', '123456', self.client_id, user)  # 将用户名和连接加入连接列表
+                User(sock, address, 'User', self.client_id, user)  # 将用户名和连接加入连接列表
 
         online_users = self.getOnlineUsers()  # 获取在线用户
         time.sleep(0.2)  # 等待一下，否则可能会出现粘包
         for sending_sock in self.user_connections.values():  # 开始发送用户列表
-            sending_sock.getSocket().send(pack(json.dumps(online_users), '', default_room, 'USER_MANIFEST'))
+            sending_sock.getSocket().send(pack(json.dumps(online_users), '', self.default_room, 'USER_MANIFEST'))
+        self.log(f"{user} logged in.")
         return
 
     def getOnlineUsers(self) -> list:
@@ -658,11 +704,10 @@ class Server:
                 del self.user_connections[cid]  # 删除连接
         online_users = self.getOnlineUsers()
         for sending_sock in self.user_connections.values():
-            sending_sock.getSocket().send(pack(json.dumps(online_users), '', default_room, 'USER_MANIFEST'))
+            sending_sock.getSocket().send(pack(json.dumps(online_users), '', self.default_room, 'USER_MANIFEST'))
         sock.close()
 
-    @staticmethod
-    def log(content: str, end='\n', show_time=True):
+    def log(self, content: str, end='\n', show_time=True):
         """
         日志
         :param content: 日志内容
@@ -674,19 +719,18 @@ class Server:
             print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}', end=end)
         else:
             print(content, end=end)
-        if logable:
+        if self.logable:
             with open(f'logs/lhat_server{time.strftime("%Y-%m-%d", time.localtime())}.log', 'a') as f:
                 f.write(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}')
 
-    @staticmethod
-    def record(message):
+    def record(self, message):
         """
         记录聊天消息
         :param message: 记录内容
         :return: 无返回值
         """
         print(message)
-        if recordable:
+        if self.recordable:
             with open('records/lhat_chatting_record.txt', 'a') as f:
                 if isinstance(message, str):
                     f.write(message + '\n')

@@ -45,6 +45,8 @@ def unpack(json_message: str):
             message = json.loads(message)
     except json.decoder.JSONDecodeError:
         return 'DO_NOT_PROCESS',
+    except UnicodeDecodeError:
+        return 'DO_NOT_PROCESS',
 
     if 'to' not in message or 'by' not in message or 'message' not in message:
         return None,
