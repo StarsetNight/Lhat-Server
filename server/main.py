@@ -496,11 +496,15 @@ class Server:
                 elif command[0] == 'option':  # 服务器管理设置
                     if command[1] == 'show':
                         self.log(f'{recv_data[1]} checked the server options.')
-                        sock.send(pack(f'Server Management Settings\nlogable: {self.logable}\nrecordable: {self.recordable}\n'
-                                       f'forceAccount: {self.force_account}\nallowRegister: {self.allow_register}',
+                        sock.send(pack(f'Server Management Settings\n'
+                                       f'logable: {self.logable}\n'
+                                       f'recordable: {self.recordable}\n'
+                                       f'forceAccount: {self.force_account}\n'
+                                       f'allowRegister: {self.allow_register}',
                                        'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'set':
                         self.log(f'{recv_data[1]} tried to set {command[2]} to {command[3]}')
+                        vaild_option = True
                         if command[2] == 'logable':
                             self.logable = (command[3] == 'true')
                         elif command[2] == 'recordable':
@@ -509,9 +513,14 @@ class Server:
                             self.force_account = (command[3] == 'true')
                         elif command[2] == 'allowRegister':
                             self.allow_register = (command[3] == 'true')
-                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}',
-                                       'Server', '', 'TEXT_MESSAGE'))
+                        else:
+                            vaild_option = False
 
+                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}'
+                                       if vaild_option  # 如果选项有效，则发送上面的句子，反之发送下面的
+                                       else
+                                       f'Option {command[2]} not found, please check typing.',
+                                       'Server', '', 'TEXT_MESSAGE'))
 
                 elif command[0] == 'resetpwd':  # 自助重置密码
                     self.log(f'{recv_data[1]} wants to reset password.')
