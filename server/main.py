@@ -28,12 +28,18 @@ class Server:
     ip: str = settings.ip_address  # 服务器IP地址
     port: int = settings.network_port  # 服务器端口
     default_room: str = settings.default_room  # 默认聊天室名称
+    user_connections: dict  # 用户连接列表
+    need_handle_messages: list  # 消息队列
+    chatting_rooms: list  # 聊天室列表
+    sql_exist_user: list  # 数据库中的用户
+    client_id: int  # 用于给每个连接分配的id
 
     # SETTINGS
     logable: bool  # 是否记录日志
     recordable: bool  # 是否记录聊天记录
     force_account: bool  # 是否强制用户系统，为True时，游客无法加入聊天室
     allow_register: bool  # 是否允许注册新用户，Manager权限以上可以在运行后更改
+    lock_server: bool  # 为保证服务器通讯安全，可以锁定服务器，仅Admin权限用户可加入，但是已加入普通用户不会被踢出
 
     def __init__(self):
         """
@@ -48,10 +54,13 @@ class Server:
         if not os.path.exists('files'):
             os.mkdir('files')
         print(f'Lhat Chatting Server Version {self.VERSION} using AGPL v3.0 License')
+
         self.logable = settings.log
         self.recordable = settings.record
         self.force_account = settings.force_account
         self.allow_register = settings.allow_register
+        self.lock_server = settings.lock_server
+
         self.log('Server arguments set.')
         self.log('=====NEW SERVER INITIALIZING BELOW=====', show_time=False)
         self.user_connections = {}  # 创建一个空的用户连接列表
@@ -331,8 +340,11 @@ class Server:
                     if self.user_connections[recv_data[1]].getPermission() != 'User':
                         if command[1] in self.user_connections and \
                                 self.user_connections[command[1]].getPermission() == 'User':
+                            # 如果有踢出原因，则加上，没有就不加
+                            reason = (f'原因：{" ".join(command[3:])}' if len(command) > 2 else '')
+
                             self.user_connections[command[1]].getSocket().send(pack(
-                                f'你已被管理员踢出服务器。', 'Server', '', 'TEXT_MESSAGE'))
+                                f'你已被管理员踢出服务器。{reason}', 'Server', '', 'KICK_NOTICE'))
                             self.closeConnection(self.user_connections[command[1]].getSocket(),
                                                  self.user_connections[command[1]].getAddress())
                             self.log(f'{command[1]} kicked.')
@@ -438,7 +450,7 @@ class Server:
                                 self.sql_connection.commit()
                                 if command[2] in self.user_connections:
                                     self.user_connections[command[2]].getSocket().send(pack(
-                                        f'你已被管理员踢出服务器。', 'Server', '', 'TEXT_MESSAGE'))
+                                        f'你已被管理员踢出服务器，你的账户也一并被删除。', 'Server', '', 'KICK_NOTICE'))
                                     self.closeConnection(self.user_connections[command[2]].getSocket(),
                                                          self.user_connections[command[2]].getAddress())
                                 self.sql_exist_user.remove(command[2])
@@ -470,7 +482,7 @@ class Server:
                                 self.sql_connection.commit()
                                 if command[2] in self.user_connections:
                                     self.user_connections[command[2]].getSocket().send(pack(
-                                        f'你已被管理员踢出服务器。', 'Server', '', 'TEXT_MESSAGE'))
+                                        f'你已被管理员踢出服务器并封禁。', 'Server', '', 'KICK_NOTICE'))
                                     self.closeConnection(self.user_connections[command[2]].getSocket(),
                                                          self.user_connections[command[2]].getAddress())
                                 sock.send(pack(f'{command[2]} banned.', 'Server', '', 'TEXT_MESSAGE'))
@@ -496,11 +508,16 @@ class Server:
                 elif command[0] == 'option':  # 服务器管理设置
                     if command[1] == 'show':
                         self.log(f'{recv_data[1]} checked the server options.')
-                        sock.send(pack(f'Server Management Settings\nlogable: {self.logable}\nrecordable: {self.recordable}\n'
-                                       f'forceAccount: {self.force_account}\nallowRegister: {self.allow_register}',
+                        sock.send(pack(f'Server Management Settings\n'
+                                       f'logable: {self.logable}\n'
+                                       f'recordable: {self.recordable}\n'
+                                       f'forceAccount: {self.force_account}\n'
+                                       f'allowRegister: {self.allow_register}\n'
+                                       f'lockServer: {self.lock_server}',
                                        'Server', '', 'TEXT_MESSAGE'))
                     elif command[1] == 'set':
                         self.log(f'{recv_data[1]} tried to set {command[2]} to {command[3]}')
+                        vaild_option = True
                         if command[2] == 'logable':
                             self.logable = (command[3] == 'true')
                         elif command[2] == 'recordable':
@@ -509,9 +526,16 @@ class Server:
                             self.force_account = (command[3] == 'true')
                         elif command[2] == 'allowRegister':
                             self.allow_register = (command[3] == 'true')
-                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}',
-                                       'Server', '', 'TEXT_MESSAGE'))
+                        elif command[2] == 'lockServer':
+                            self.lock_server = (command[3] == 'true')
+                        else:
+                            vaild_option = False
 
+                        sock.send(pack(f'Option {command[2]} has been set to {command[3] == "true"}'
+                                       if vaild_option  # 如果选项有效，则发送上面的句子，反之发送下面的
+                                       else
+                                       f'Option {command[2]} not found, please check typing.',
+                                       'Server', '', 'TEXT_MESSAGE'))
 
                 elif command[0] == 'resetpwd':  # 自助重置密码
                     self.log(f'{recv_data[1]} wants to reset password.')
@@ -576,6 +600,11 @@ class Server:
                 sock.send(bytes('failed\0', 'utf-8'))  # 不允许注册为Server
                 self.closeConnection(sock, address)
                 return
+            elif len(user) > 20:
+                self.log(f'{user} tried to register with a over-length name.')
+                sock.send(bytes('failed\0', 'utf-8'))  # 不允许注册为Server
+                self.closeConnection(sock, address)
+                return
             else:
                 self.sql_cursor.execute('INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION, BAN) VALUES (?, ?, ?, ?)',
                                         (user, passwd, 'User', 0))
@@ -595,49 +624,59 @@ class Server:
         if passwd:
             if user in self.user_connections:
                 self.log(f'{user} tried to login again.')
-                sock.send(pack(f'请不要重复登录。', 'Server', '', 'TEXT_MESSAGE'))
+                sock.send(pack(f'另一处已登录你的账户，请不要重复登录。', 'Server', '', 'KICK_NOTICE'))
                 self.closeConnection(sock, address)
                 return
             try:
                 self.sql_cursor.execute('SELECT * FROM USERS WHERE USER_NAME = ? AND PASSWORD = ?', (user, passwd))
             except sqlite3.OperationalError:
                 self.log(f'{user} tried to login with a wrong password.')
-                sock.send(pack(f'用户名或密码错误。', 'Server', '', 'TEXT_MESSAGE'))
+                sock.send(pack(f'用户名或密码错误。', 'Server', '', 'KICK_NOTICE'))
                 self.closeConnection(sock, address)
                 return
             else:
                 # 暂时保存查询信息
-                query_result = self.sql_cursor.fetchone()
+                query_result: list = self.sql_cursor.fetchone()
 
             if not query_result:
                 self.log(f'{user} tried to login with a wrong password.')
-                sock.send(pack(f'用户名或密码错误。', 'Server', '', 'TEXT_MESSAGE'))
+                sock.send(pack(f'用户名或密码错误。', 'Server', '', 'KICK_NOTICE'))
                 self.closeConnection(sock, address)
                 return
             else:
                 logged_user = True
         elif self.force_account:
             self.log(f'{user} tried to login without password.')
-            sock.send(pack('该服务器启用了强制用户系统，请使用帐号登录。', 'Server', '', 'TEXT_MESSAGE'))
+            sock.send(pack('该服务器启用了强制用户系统，请使用账号密码登录。', 'Server', '', 'KICK_NOTICE'))
             self.closeConnection(sock, address)
             return
         elif user in self.sql_exist_user:
             self.log(f'{user} is already in the database.')
-            sock.send(pack(f'该用户名已存在。', 'Server', '', 'TEXT_MESSAGE'))
+            sock.send(pack(f'该用户名已存在于数据库。', 'Server', '', 'KICK_NOTICE'))
+            self.closeConnection(sock, address)
+            return
+        elif user in self.user_connections:  # 如果重名，直接阻止登录！
+            self.log(f'{user} is already in the online list.')
+            sock.send(pack(f'该用户名已存在于在线列表。', 'Server', '', 'KICK_NOTICE'))
             self.closeConnection(sock, address)
             return
         elif user == 'Server':
             self.log(f'{user} tried to login as Server.')
-            sock.send(pack(f'该用户名已存在。', 'Server', '', 'TEXT_MESSAGE'))
+            sock.send(pack(f'该用户名为保留名。', 'Server', '', 'KICK_NOTICE'))
             self.closeConnection(sock, address)
             return
         else:
             logged_user = False
-            query_result = ('' for _ in range(6))
+            query_result: list = ['' for _ in range(6)]
 
         if query_result[3]:
             self.log(f'{user} is banned.')
-            sock.send(pack(f'你已被管理员封禁。', 'Server', '', 'TEXT_MESSAGE'))
+            sock.send(pack(f'你已被管理员封禁。', 'Server', '', 'KICK_NOTICE'))
+            self.closeConnection(sock, address)
+            return
+        elif query_result[2] != 'Admin' and self.lock_server:
+            self.log(f'{user} tried to login the locked server without an Admin permission.')
+            sock.send(pack(f'此服务器已锁定，请使用管理员权限的用户登入。', 'Server', '', 'KICK_NOTICE'))
             self.closeConnection(sock, address)
             return
 
@@ -648,10 +687,8 @@ class Server:
         while user in self.chatting_rooms:  # 如果用户名已经存在
             user += new_port  # 用户名和端口号
         user = user[:20].strip()  # 如果用户名过长，则截断并去除首尾空格
-        for client in self.user_connections.values():
-            if client.getUserName() == user:  # 如果重名，则添加数字（端口不会重复）
-                user += new_port
-            # 将用户名加入连接列表
+
+        # 将用户名加入连接列表
 
         # User类的实例化参数: conn, address, permission, passwd, id_num, name
         if logged_user and query_result:
