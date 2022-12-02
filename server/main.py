@@ -341,10 +341,10 @@ class Server:
                         if command[1] in self.user_connections and \
                                 self.user_connections[command[1]].getPermission() == 'User':
                             # 如果有踢出原因，则加上，没有就不加
-                            reason = (f'原因：{" ".join(command[3:])}' if len(command) > 2 else '')
+                            reason = (f'，{" ".join(command[3:])}' if len(command) > 2 else '')
 
                             self.user_connections[command[1]].getSocket().send(pack(
-                                f'你已被管理员踢出服务器。{reason}', 'Server', '', 'KICK_NOTICE'))
+                                f'你已被管理员踢出服务器{reason}。', 'Server', '', 'KICK_NOTICE'))
                             self.closeConnection(self.user_connections[command[1]].getSocket(),
                                                  self.user_connections[command[1]].getAddress())
                             self.log(f'{command[1]} kicked.')
@@ -481,8 +481,9 @@ class Server:
                                 self.sql_cursor.execute('UPDATE USERS SET BAN = ? WHERE USER_NAME = ?', (1, command[2]))
                                 self.sql_connection.commit()
                                 if command[2] in self.user_connections:
+                                    reason = (f'，{" ".join(command[3:])}' if len(command) > 2 else '')
                                     self.user_connections[command[2]].getSocket().send(pack(
-                                        f'你已被管理员踢出服务器并封禁。', 'Server', '', 'KICK_NOTICE'))
+                                        f'你已被管理员踢出服务器并封禁{reason}。', 'Server', '', 'KICK_NOTICE'))
                                     self.closeConnection(self.user_connections[command[2]].getSocket(),
                                                          self.user_connections[command[2]].getAddress())
                                 sock.send(pack(f'{command[2]} banned.', 'Server', '', 'TEXT_MESSAGE'))
