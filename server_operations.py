@@ -21,7 +21,7 @@ def pack(raw_message, send_from, chat_with, message_type):
     return (json.dumps(message) + '\0').encode('utf-8')  # 再用json打包
 
 
-def unpack(json_message: str):
+def unpack(json_message: bytes):
     """
     解包消息，用于接收JSON格式的消息
     看不懂message字典对应的东西吗？message_types里面有。
@@ -52,7 +52,7 @@ def unpack(json_message: str):
         return None,
     if message['type'] == 'TEXT_MESSAGE' or \
             message['type'] == 'COLOR_MESSAGE':  # 如果是纯文本消息
-        return message['type'], message['to'], message['by'], message['time']
+        return message['type'], message['to'], message['by'], message['time'], message['message']
     elif message['type'] == 'USER_NAME' or \
             message['type'] == 'REGISTER':  # 如果是用户名称
         try:
