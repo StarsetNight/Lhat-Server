@@ -45,47 +45,56 @@ class Server:
     lock_server: bool  # 为保证服务器通讯安全，可以锁定服务器，仅Admin权限用户可加入，但是已加入普通用户不会被踢出
 
     @staticmethod
-    def check_dir():
+    def checkDir():
         """
-        初始化文件夹
+        检查文件夹是否初始化创建，如果没有则创建。
+        :return: 无返回值
         """
         dir_check_list = ["records", "logs", "sql", "files"]
         for dir_name in dir_check_list:
             if not os.path.exists(dir_name):
                 os.mkdir(dir_name)
 
+    @staticmethod
+    def sync():
+        """
+        服务器同步，通常用于避免TCP粘包。
+        :return: 无返回值
+        """
+        time.sleep(0.0005)  # 同步用途的主线程阻塞时间延迟
+
     def __init__(self):
         """
         初始化服务器
         """
-        self.check_dir()
-        print(f"Lhat Chatting Server Version {self.VERSION} using AGPL v3.0 License")
+        self.checkDir()
+        print(f"Lhat Chatting Server Version {self.VERSION} AGPL v3.0 License")
 
-        self.logable = settings.log
-        self.recordable = settings.record
-        self.force_account = settings.force_account
-        self.allow_register = settings.allow_register
-        self.lock_server = settings.lock_server
+        self.logable: bool = settings.log
+        self.recordable: bool = settings.record
+        self.force_account: bool = settings.force_account
+        self.allow_register: bool = settings.allow_register
+        self.lock_server: bool = settings.lock_server
 
         self.log("Server arguments set.")
         self.log("=====NEW SERVER INITIALIZING BELOW=====", show_time=False)
-        self.user_connections = {}  # 创建一个空的用户连接列表
-        self.need_handle_messages = []  # 创建一个空的消息队列
-        self.chatting_rooms = [self.default_room]  # 创建一个聊天室列表
-        self.sql_exist_user = []  # 数据库中的用户
-        self.client_id = 0  # 创建一个id，用于给每个连接分配一个id
+        self.user_connections: dict[str, User] = {}  # 创建一个空的用户连接列表
+        self.need_handle_messages: list[bytes] = []  # 创建一个空的消息队列
+        self.chatting_rooms: list[str] = [self.default_room]  # 创建一个聊天室列表
+        self.sql_exist_user: list[str] = []  # 数据库中的用户
+        self.client_id: int = 0  # 创建一个id，用于给每个连接分配一个id
         self.log("Initializing server... ", end="")
-        self.select = selectors.DefaultSelector()  # 创建IO多路复用
-        self.main_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
+        self.select: selectors.DefaultSelector = selectors.DefaultSelector()  # 创建IO多路复用
+        self.main_sock: socket.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)  # 创建socket
         self.main_sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
         self.log("Done!", show_time=False)
         self.log("Now the server can be ran.")
 
-        self.sql_connection = sqlite3.connect(
+        self.sql_connection: sqlite3.Connection = sqlite3.connect(
             "sql/server.db", check_same_thread=False
         )  # 创建数据库连接
         self.log("SQLite3 database connected.")
-        self.sql_cursor = self.sql_connection.cursor()  # 创建数据库游标
+        self.sql_cursor: sqlite3.Cursor = self.sql_connection.cursor()  # 创建数据库游标
         self.log("SQLite3 cursor created.")
         self.sql_cursor.execute(create_table)  # 创建数据库表，名为USERS
         self.sql_connection.commit()
@@ -125,7 +134,7 @@ class Server:
             self.main_sock, selectors.EVENT_READ, data=""
         )  # 注册socket到IO多路复用，以便于多连接
         while True:
-            events = self.select.select(timeout=None)  # 阻塞等待IO事件
+            events: list[tuple[selectors.SelectorKey, int]] = self.select.select(timeout=None)  # 阻塞等待IO事件
             for key, mask in events:  # 事件循环，key用于获取连接，mask用于获取事件类型
                 if key.data == "":  # 如果是新连接
                     self.createConnection(key.fileobj)  # 接收连接
@@ -139,16 +148,15 @@ class Server:
         :param sock: 创建的socket对象
         :return: 无返回值
         """
+        conn: socket.socket
+        address: tuple[str, int]
+
         conn, address = sock.accept()  # 接收连接，并创建一个新的连接
         self.log(f"Connection established: {address[0]}:{address[1]}")
         conn.setblocking(False)  # 设置为非阻塞
         conn.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)  # 设置为非延迟发送
-        namespace = types.SimpleNamespace(
-            address=address, inbytes=b""
-        )  # 创建一个空的命名空间，用于存储连接信息
-        self.select.register(
-            conn, selectors.EVENT_READ | selectors.EVENT_WRITE, data=namespace
-        )  # 注册连接到IO多路复用，以便于多连接
+        namespace: types.SimpleNamespace = types.SimpleNamespace(address=address, inbytes=b"")  # 创建一个空的命名空间，用于存储连接信息
+        self.select.register(conn, selectors.EVENT_READ | selectors.EVENT_WRITE, data=namespace)  # 注册连接到IO多路复用，以便于多连接
 
     def serveClient(self, key, mask):
         """
@@ -157,8 +165,8 @@ class Server:
         :param mask: 用于判断客户端目前是否可用，是一个布尔变量
         :return: 无返回值
         """
-        sock = key.fileobj  # 获取socket
-        data = key.data  # 获取命名空间
+        sock: socket.socket = key.fileobj  # 获取socket
+        data: types.SimpleNamespace = key.data  # 获取命名空间
         if mask & selectors.EVENT_READ:  # 如果可读，则开始从客户端读取消息
             try:
                 data.inbytes = sock.recv(1024)  # 从客户端读取消息
@@ -189,10 +197,10 @@ class Server:
                     except ConnectionResetError:  # 服务端断开连接
                         self.closeConnection(sock, data.address)
                         return
-                self.need_handle_messages = []
-                time.sleep(0.0005)  # 粘包现象很恶心，sleep暂时能解决
+                self.need_handle_messages.clear()
+                self.sync()  # 粘包现象很恶心，sleep暂时能解决
 
-    def processMessage(self, message: str, sock: socket.socket, address=None):
+    def processMessage(self, message: bytes, sock: socket.socket, address=None):
         """
         处理消息，让服务器决定如何处理
         :param message: 待处理的消息
@@ -204,61 +212,41 @@ class Server:
             self.closeConnection(sock, address)
             return
         recv_data = unpack(message)  # 解码消息
-        time.sleep(0.0005)  # 延迟，防止粘包
-        if (
-            recv_data[0] == "TEXT_MESSAGE" or recv_data[0] == "COLOR_MESSAGE"
-        ):  # 如果能正常解析，则进行处理
-            if recv_data[1] == self.default_room:  # 默认聊天室的群聊
+        self.sync()  # 延迟，防止粘包
+        if recv_data[0] == "TEXT_MESSAGE":  # 如果能正常解析，则进行处理
+            if recv_data[1] in self.chatting_rooms:  # 如果是公开聊天室的群聊
                 self.record(message)
-                for sending_sock in self.user_connections.values():  # 直接发送
-                    sending_sock.getSocket().send(message)
-            # 这里可能有点疑惑，默认聊天室明明也在chatting_rooms里，这里不会出问题吗？
-            # 回答是，不会的。因为只要第一个if条件过不去，那么这就不是默认聊天室了，而是其他聊天室或私聊
-            elif recv_data[1] in self.chatting_rooms:  # 如果是其他聊天室的群聊
-                print(f"Other rooms message received: {recv_data[3]}")
-                for sending_sock in self.user_connections.values():
-                    if recv_data[1] in sending_sock.getRooms():  # 如果该用户在该聊天室
-                        sending_sock.getSocket().send(message)
+                print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(recv_data[3])))}] '
+                      f'({recv_data[1]}) <{recv_data[2]}> {message}')
+                for sending_client in self.user_connections.values():
+                    if recv_data[1] in sending_client.getRooms():  # 如果该用户在该聊天室
+                        sending_client.getSocket().send(message)
             else:  # 私聊
-                print(f"Private message received [{recv_data[3]}]")
-                """
-                for sending_sock in self.user_connections.values():
-                    if sending_sock.getUserName() == recv_data[1] or \
-                            sending_sock.getUserName() == recv_data[2]:  # 遍历所有用户，找到对应用户
-                        # 第一个表达式很好理解，发给谁就给谁显示，第二个表达式则是自己发送，但是也得显示给自己
-                        sending_sock.getSocket().send(message)  # 发送给该用户
-                """
+                print(f"[{recv_data[3]}] Private message received.")
                 # 显然遍历没下标好
                 if recv_data[1] in self.user_connections:
-                    sock.send(message.encode(encoding="utf_8"))
+                    sock.send(message)
                     self.user_connections[recv_data[1]].getSocket().send(message)
                 else:
                     sock.send(pack("私聊目标用户不存在。", "Server", "", "TEXT_MESSAGE"))
 
         elif recv_data[0] == "SEND_FILE":
-            print(f"File sending request received: {recv_data[1]}")
+            print(f"{recv_data[1]} File send request received")
             # 待办: 发送及接收文件
 
         elif recv_data[0] == "COMMAND":
             # 客户端会发送命令，于是服务器应该根据命令进行相应的处理
             command = recv_data[2].split(" ")  # 分割命令
-            time.sleep(0.001)
+            self.sync()
+            self.sync()
             try:
                 if command[0] == "room":
                     room_name = " ".join(command[2:])  # 将命令分割后的后面的部分合并为一个字符串
                     if command[1] == "create":  # 创建聊天室，需要Manager以上权限
-                        self.log(f"{recv_data[1]} wants to create room {room_name}")
-                        if (
-                            self.user_connections[recv_data[1]].getPermission()
-                            != "User"
-                        ):  # 如果不是普通用户
-                            if (
-                                room_name in self.chatting_rooms
-                                or room_name in self.user_connections
-                            ):
-                                self.log(
-                                    f"Room {room_name} already exists, abort creating."
-                                )
+                        self.log(f"{recv_data[1]} requests to create room {room_name}")
+                        if self.user_connections[recv_data[1]].getPermission() != "User":  # 如果不是普通用户
+                            if (room_name in self.chatting_rooms) or (room_name in self.user_connections):
+                                self.log(f"Room {room_name} already exists, abort creating.")
                                 sock.send(
                                     pack(
                                         f"Room {room_name} already exists, abort creating.",
@@ -282,11 +270,13 @@ class Server:
                                             )
                                         )
                         else:
-                            self.log(
-                                f"User {recv_data[1]} is not allowed to create room."
-                            )
+                            self.log(f"User {recv_data[1]} is not allowed to create room.")
                             sock.send(
-                                pack(f"你没有创建聊天室的权限。", "Server", "", "TEXT_MESSAGE")
+                                pack(f"你没有创建聊天室的权限。",
+                                     "Server",
+                                     "",
+                                     "TEXT_MESSAGE",
+                                )
                             )
                     elif command[1] == "join":  # 加入聊天室
                         self.log(f"{recv_data[1]} join room {room_name}")
@@ -313,7 +303,7 @@ class Server:
                                 )
                             )
                     elif command[1] == "list":  # 列出所有聊天室
-                        self.log(f"{recv_data[1]} wants to check online rooms.")
+                        self.log(f"{recv_data[1]} requests to check online rooms.")
                         sock.send(
                             pack(
                                 f"Now online rooms: {self.chatting_rooms}\n"
@@ -324,7 +314,7 @@ class Server:
                             )
                         )
                     elif command[1] == "leave":  # 离开聊天室
-                        self.log(f"{recv_data[1]} wants to leave room {room_name}")
+                        self.log(f"{recv_data[1]} requests to leave room {room_name}")
                         if room_name in self.chatting_rooms:
                             for name, user in self.user_connections.items():
                                 if name == recv_data[1]:
@@ -348,11 +338,8 @@ class Server:
                                 )
                             )
                     elif command[1] == "delete":  # 删除聊天室，需要Manager以上权限
-                        self.log(f"{recv_data[1]} wants to delete room {room_name}")
-                        if (
-                            self.user_connections[recv_data[1]].getPermission()
-                            == "Admin"
-                        ):
+                        self.log(f"{recv_data[1]} requests to delete room {room_name}")
+                        if self.user_connections[recv_data[1]].getPermission() == "Admin":
                             if room_name in self.chatting_rooms:
                                 self.chatting_rooms.remove(room_name)
                                 self.log(f"Room {room_name} deleted.")
@@ -376,9 +363,7 @@ class Server:
                                         )
                                     )
                             else:
-                                self.log(
-                                    f"Room {room_name} does not exist, abort deleting."
-                                )
+                                self.log(f"Room {room_name} does not exist, abort deleting.")
                                 sock.send(
                                     pack(
                                         f"{room_name} 不存在，无法删除。",
@@ -388,9 +373,7 @@ class Server:
                                     )
                                 )
                         else:
-                            self.log(
-                                f"{recv_data[1]} do not have the permission to delete {room_name}."
-                            )
+                            self.log(f"{recv_data[1]} do not have the permission to delete {room_name}.")
                             sock.send(
                                 pack(
                                     f"你没有权限删除聊天室 {room_name}。",
@@ -399,7 +382,7 @@ class Server:
                                     "TEXT_MESSAGE",
                                 )
                             )
-                    time.sleep(0.0005)
+                    self.sync()
                     sock.send(
                         pack(
                             json.dumps(self.user_connections[recv_data[1]].getRooms()),
@@ -415,12 +398,12 @@ class Server:
                     if self.user_connections[recv_data[1]].getPermission() == "Admin":
                         if command[1] == "add":
                             self.log(
-                                f"{recv_data[1]} wants to add {operate_user} to the Manager group."
+                                f"{recv_data[1]} requests to add {operate_user} to the Manager group."
                             )
                             if (
-                                operate_user in self.user_connections
-                                and self.user_connections[operate_user].getPermission()
-                                == "User"
+                                    operate_user in self.user_connections
+                                    and self.user_connections[operate_user].getPermission()
+                                    == "User"
                             ):
                                 self.user_connections[operate_user].setPermission(
                                     "Manager"
@@ -453,12 +436,12 @@ class Server:
                                 )
                         elif command[1] == "delete":
                             self.log(
-                                f"{recv_data[1]} wants to delete {operate_user} from the Manager group."
+                                f"{recv_data[1]} requests to delete {operate_user} from the Manager group."
                             )
                             if (
-                                operate_user in self.user_connections
-                                and self.user_connections[operate_user].getPermission()
-                                == "Manager"
+                                    operate_user in self.user_connections
+                                    and self.user_connections[operate_user].getPermission()
+                                    == "Manager"
                             ):
                                 self.user_connections[operate_user].setPermission(
                                     "User"
@@ -488,7 +471,7 @@ class Server:
                                     )
                                 )
                         elif command[1] == "list":
-                            self.log(f"{recv_data[1]} wants to list all managers.")
+                            self.log(f"{recv_data[1]} requests to list all managers.")
                             sock.send(
                                 pack(
                                     json.dumps(self.getManagers()),
@@ -499,7 +482,7 @@ class Server:
                             )
                     else:
                         if command[1] == "list":
-                            self.log(f"{recv_data[1]} wants to list all managers.")
+                            self.log(f"{recv_data[1]} requests to list all managers.")
                             sock.send(
                                 pack(
                                     json.dumps(self.getManagers()),
@@ -517,12 +500,12 @@ class Server:
                             )
 
                 elif command[0] == "kick":
-                    self.log(f"{recv_data[1]} wants to kick {command[1]}.")
+                    self.log(f"{recv_data[1]} requests to kick {command[1]}.")
                     if self.user_connections[recv_data[1]].getPermission() != "User":
                         if (
-                            command[1] in self.user_connections
-                            and self.user_connections[command[1]].getPermission()
-                            == "User"
+                                command[1] in self.user_connections
+                                and self.user_connections[command[1]].getPermission()
+                                == "User"
                         ):
                             # 如果有踢出原因，则加上，没有就不加
                             reason = (
@@ -559,9 +542,9 @@ class Server:
                                     )
                                 )
                                 for (
-                                    sending_sock
+                                        sending_client
                                 ) in self.user_connections.values():  # 直接发送
-                                    sending_sock.getSocket().send(
+                                    sending_client.getSocket().send(
                                         pack(
                                             f"[新闻] 人类迷惑行为: {recv_data[1]} 试图把自己踢出服务器。",
                                             "Server",
@@ -594,7 +577,7 @@ class Server:
 
                 elif command[0] == "update":  # 有的用户可能无法及时更新用户列表，所以可以手动更新
                     self.log(
-                        f"{recv_data[1]} wants to update his user manifest manually."
+                        f"{recv_data[1]} requests to update his user manifest manually."
                     )
                     sock.send(
                         pack(
@@ -604,18 +587,18 @@ class Server:
                             "USER_MANIFEST",
                         )
                     )
-                    time.sleep(0.0005)
+                    self.sync()
                     sock.send(pack("你已成功更新用户列表。", "Server", "", "TEXT_MESSAGE"))
 
                 elif command[0] == "user":  # 用户系统相关命令
-                    self.log(f"{recv_data[1]} wants to operate the SQL database.")
+                    self.log(f"{recv_data[1]} requests to operate the SQL database.")
                     if self.user_connections[recv_data[1]].getPermission() == "Admin":
                         if command[1] == "create":  # 创建用户
-                            self.log(f"{recv_data[1]} wants to create {command[2]}.")
+                            self.log(f"{recv_data[1]} requests to create {command[2]}.")
                             if (
-                                command[2] not in self.sql_exist_user
-                                and command[2] not in self.user_connections
-                                and command[2] != "Server"
+                                    command[2] not in self.sql_exist_user
+                                    and command[2] not in self.user_connections
+                                    and command[2] != "Server"
                             ):
                                 self.sql_cursor.execute(
                                     "INSERT INTO USERS (USER_NAME, PASSWORD, PERMISSION, BAN) "
@@ -655,7 +638,7 @@ class Server:
 
                         elif command[1] == "setpwd":  # 设置密码
                             self.log(
-                                f"{recv_data[1]} wants to set password of {command[2]}."
+                                f"{recv_data[1]} requests to set password of {command[2]}."
                             )
                             if command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute(
@@ -698,7 +681,7 @@ class Server:
 
                         elif command[1] == "setper":  # 设置权限
                             self.log(
-                                f"{recv_data[1]} wants to set permission of {command[2]}."
+                                f"{recv_data[1]} requests to set permission of {command[2]}."
                             )
                             if command[2] == "root":
                                 self.log(
@@ -750,7 +733,7 @@ class Server:
                                 )
 
                         elif command[1] == "delete":  # 删除用户
-                            self.log(f"{recv_data[1]} wants to delete {command[2]}.")
+                            self.log(f"{recv_data[1]} requests to delete {command[2]}.")
                             # 查看数据库中要删除的用户的权限
                             self.sql_cursor.execute(
                                 "SELECT PERMISSION FROM USERS WHERE USER_NAME = ?",
@@ -821,7 +804,7 @@ class Server:
                                 )
 
                         elif command[1] == "ban":  # 封禁用户
-                            self.log(f"{recv_data[1]} wants to ban {command[2]}")
+                            self.log(f"{recv_data[1]} requests to ban {command[2]}")
                             self.sql_cursor.execute(
                                 "SELECT PERMISSION FROM USERS WHERE USER_NAME = ?",
                                 (command[2],),
@@ -904,7 +887,7 @@ class Server:
                                 )
 
                         elif command[1] == "restore":  # 解封用户
-                            self.log(f"{recv_data[1]} wants to restore {command[2]}")
+                            self.log(f"{recv_data[1]} requests to restore {command[2]}")
                             if command[2] in self.sql_exist_user:
                                 self.sql_cursor.execute(
                                     "UPDATE USERS SET BAN = ? WHERE USER_NAME = ?",
@@ -988,7 +971,7 @@ class Server:
                         )
 
                 elif command[0] == "resetpwd":  # 自助重置密码
-                    self.log(f"{recv_data[1]} wants to reset password.")
+                    self.log(f"{recv_data[1]} requests to reset password.")
                     if not command[1]:
                         self.log(
                             f"{recv_data[1]} tried to reset password without a password."
@@ -1043,8 +1026,8 @@ class Server:
                 )
 
         elif recv_data[0] == "DO_NOT_PROCESS":  # 如果收到的是一个无效的消息，则先尝试直接发送
-            for sending_sock in self.user_connections.values():
-                sending_sock.getSocket().send(message)
+            for sending_client in self.user_connections.values():
+                sending_client.getSocket().send(message)
 
         elif recv_data[0] == "USER_NAME":  # 如果是用户名
             threading.Thread(
@@ -1258,8 +1241,8 @@ class Server:
             print(content, end=end)
         if self.logable:
             with open(
-                f'logs/lhat_server{time.strftime("%Y-%m-%d", time.localtime())}.log',
-                "a",
+                    f'logs/lhat_server{time.strftime("%Y-%m-%d", time.localtime())}.log',
+                    "a",
             ) as f:
                 f.write(
                     f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())}] {content}{end}'
@@ -1271,7 +1254,6 @@ class Server:
         :param message: 记录内容
         :return: 无返回值
         """
-        print(message)
         if self.recordable:
             with open("records/lhat_chatting_record.txt", "a") as f:
                 if isinstance(message, str):
