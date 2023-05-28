@@ -217,7 +217,7 @@ class Server:
             if recv_data[1] in self.chatting_rooms:  # 如果是公开聊天室的群聊
                 self.record(message)
                 print(f'[{time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(float(recv_data[3])))}] '
-                      f'({recv_data[1]}) <{recv_data[2]}> {message}')
+                      f'({recv_data[1]}) <{recv_data[2]}> {recv_data[4]}')
                 for sending_client in self.user_connections.values():
                     if recv_data[1] in sending_client.getRooms():  # 如果该用户在该聊天室
                         sending_client.getSocket().send(message)

@@ -52,7 +52,7 @@ def unpack(json_message: bytes):
         return None,
     if message['type'] == 'TEXT_MESSAGE' or \
             message['type'] == 'COLOR_MESSAGE':  # 如果是纯文本消息
-        return message['type'], message['to'], message['by'], message['time']
+        return message['type'], message['to'], message['by'], message['time'], message['message']
     elif message['type'] == 'USER_NAME' or \
             message['type'] == 'REGISTER':  # 如果是用户名称
         try:
